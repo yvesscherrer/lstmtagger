@@ -1,10 +1,4 @@
-import cPickle
-import itertools
-import codecs
 import numpy as np
-import matplotlib.pyplot as plt
-import dynet as dy
-from sklearn.metrics import confusion_matrix
 
 NONE_TAG = "<NONE>"
 POS_KEY = "POS"
@@ -26,7 +20,7 @@ class CSVLogger:
 
 def read_pretrained_embeddings(filename, w2i):
     word_to_embed = {}
-    with codecs.open(filename, "r", "utf-8") as f:
+    with open(filename, "r", encoding="utf-8") as f:
         for line in f:
             split = line.split()
             if len(split) > 2:
@@ -68,12 +62,12 @@ def split_tagstring(s, uni_key=False, has_pos=False):
 
 
 def morphotag_strings(i2ts, tag_mapping, pos_separate_col=True):
-    senlen = len(tag_mapping.values()[0])
+    senlen = len(list(tag_mapping.values())[0])
     key_value_strs = []
 
     # j iterates along sentence, as we're building the string representations
     # in the opposite orientation as the mapping
-    for j in xrange(senlen):
+    for j in range(senlen):
         place_strs = []
         for att, seq in tag_mapping.items():
             val = i2ts[att][seq[j]]

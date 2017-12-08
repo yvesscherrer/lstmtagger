@@ -2,7 +2,6 @@
 Follows <gold,observed> pairs, each <attribute, value> and produces macro or micro f1 scores,
 either by attribute alone (pooled over values) or by attribute-value combination.
 '''
-from __future__ import division
 from numpy import average
 
 __author__ = "Yuval Pinter, November 2016"

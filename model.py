@@ -1,16 +1,14 @@
 '''
 Main application script for tagging parts-of-speech and morphosyntactic tags. Run with --help for command line arguments.
 '''
-from __future__ import division
-from collections import Counter
-from _collections import defaultdict
+from collections import Counter, defaultdict
 from evaluate_morphotags import Evaluator
-from sys import maxint
+from sys import maxsize
 
 import collections
 import argparse
 import random
-import cPickle
+import pickle
 import logging
 import progressbar
 import os
@@ -59,15 +57,15 @@ class LSTMTagger:
         self.attributes = tagset_sizes.keys()
         self.we_update = not no_we_update
         if att_props is not None:
-            self.att_props = defaultdict(float, {att:(1.0-p) for att,p in att_props.iteritems()})
+            self.att_props = defaultdict(float, {att:(1.0-p) for att,p in att_props.items()})
         else:
             self.att_props = None
 
         if word_embeddings is not None: # Use pretrained embeddings
             vocab_size = word_embeddings.shape[0]
             word_embedding_dim = word_embeddings.shape[1]
-
-        self.words_lookup = self.model.add_lookup_parameters((vocab_size, word_embedding_dim), name="we")
+        print(vocab_size, word_embedding_dim)
+        self.words_lookup = self.model.add_lookup_parameters((vocab_size, word_embedding_dim), name=b"we")
 
         if word_embeddings is not None:
             self.words_lookup.init_from_array(word_embeddings)
@@ -75,7 +73,7 @@ class LSTMTagger:
         # Char LSTM Parameters
         self.use_char_rnn = use_char_rnn
         if use_char_rnn:
-            self.char_lookup = self.model.add_lookup_parameters((charset_size, char_embedding_dim), name="ce")
+            self.char_lookup = self.model.add_lookup_parameters((charset_size, char_embedding_dim), name=b"ce")
             self.char_bi_lstm = dy.BiRNNBuilder(1, char_embedding_dim, hidden_dim, self.model, dy.LSTMBuilder)
 
         # Word LSTM parameters
@@ -91,10 +89,10 @@ class LSTMTagger:
         self.mlp_out = {}
         self.mlp_out_bias = {}
         for att, set_size in tagset_sizes.items():
-            self.lstm_to_tags_params[att] = self.model.add_parameters((set_size, hidden_dim), name=att+"H")
-            self.lstm_to_tags_bias[att] = self.model.add_parameters(set_size, name=att+"Hb")
-            self.mlp_out[att] = self.model.add_parameters((set_size, set_size), name=att+"O")
-            self.mlp_out_bias[att] = self.model.add_parameters(set_size, name=att+"Ob")
+            self.lstm_to_tags_params[att] = self.model.add_parameters((set_size, hidden_dim), name=bytes(att+"H", 'utf-8'))
+            self.lstm_to_tags_bias[att] = self.model.add_parameters(set_size, name=bytes(att+"Hb", 'utf-8'))
+            self.mlp_out[att] = self.model.add_parameters((set_size, set_size), name=bytes(att+"O", 'utf-8'))
+            self.mlp_out_bias[att] = self.model.add_parameters(set_size, name=bytes(att+"Ob", 'utf-8'))
 
     def word_rep(self, word, char_ids):
         '''
@@ -143,14 +141,14 @@ class LSTMTagger:
         '''
         observations_set = self.build_tagging_graph(sentence, word_chars)
         errors = {}
-        for att, tags in tags_set.iteritems():
+        for att, tags in tags_set.items():
             err = []
             for obs, tag in zip(observations_set[att], tags):
                 err_t = dy.pickneglogsoftmax(obs, tag)
                 err.append(err_t)
             errors[att] = dy.esum(err)
         if self.att_props is not None:
-            for att, err in errors.iteritems():
+            for att, err in errors.items():
                 prop_vec = dy.inputVector([self.att_props[att]] * err.dim()[0])
                 err = dy.cmult(err, prop_vec)
         return errors
@@ -162,7 +160,7 @@ class LSTMTagger:
         '''
         observations_set = self.build_tagging_graph(sentence, word_chars)
         tag_seqs = {}
-        for att, observations in observations_set.iteritems():
+        for att, observations in observations_set.items():
             observations = [ dy.softmax(obs) for obs in observations ]
             probs = [ obs.npvalue() for obs in observations ]
             tag_seq = []
@@ -208,9 +206,6 @@ class LSTMTagger:
         with open(file_name + "-atts", 'w') as attdict:
             attdict.write("\t".join(sorted(self.attributes)))
 
-    @property
-    def model(self):
-        return self.model
 
 ### END OF CLASSES ###
 
@@ -240,8 +235,8 @@ if __name__ == "__main__":
     parser.add_argument("--num-epochs", default=20, dest="num_epochs", type=int, help="Number of full passes through training set (default - 20)")
     parser.add_argument("--num-lstm-layers", default=2, dest="lstm_layers", type=int, help="Number of LSTM layers (default - 2)")
     parser.add_argument("--hidden-dim", default=128, dest="hidden_dim", type=int, help="Size of LSTM hidden layers (default - 128)")
-    parser.add_argument("--training-sentence-size", default=maxint, dest="training_sentence_size", type=int, help="Instance count of training set (default - unlimited)")
-    parser.add_argument("--token-size", default=maxint, dest="token_size", type=int, help="Token count of training set (default - unlimited)")
+    parser.add_argument("--training-sentence-size", default=maxsize, dest="training_sentence_size", type=int, help="Instance count of training set (default - unlimited)")
+    parser.add_argument("--token-size", default=maxsize, dest="token_size", type=int, help="Token count of training set (default - unlimited)")
     parser.add_argument("--learning-rate", default=0.01, dest="learning_rate", type=float, help="Initial learning rate (default - 0.01)")
     parser.add_argument("--dropout", default=-1, dest="dropout", type=float, help="Amount of dropout to apply to LSTM part of graph (default - off)")
     parser.add_argument("--no-we-update", dest="no_we_update", action="store_true", help="Word Embeddings aren't updated")
@@ -283,12 +278,12 @@ if __name__ == "__main__":
                options.training_sentence_size, options.token_size, options.learning_rate, options.dropout, options.loss_prop))
 
     if options.debug:
-        print "DEBUG MODE"
+        print("DEBUG MODE")
 
     # ===-----------------------------------------------------------------------===
     # Read in dataset
     # ===-----------------------------------------------------------------------===
-    dataset = cPickle.load(open(options.dataset, "r"))
+    dataset = pickle.load(open(options.dataset, "rb"))
     w2i = dataset["w2i"]
     t2is = dataset["t2is"]
     c2i = dataset["c2i"]
@@ -352,7 +347,7 @@ if __name__ == "__main__":
     logging.info("Number training instances: {}".format(len(training_instances)))
     logging.info("Number dev instances: {}".format(len(dev_instances)))
 
-    for epoch in xrange(int(options.num_epochs)):
+    for epoch in range(int(options.num_epochs)):
         bar = progressbar.ProgressBar()
 
         # set up epoch
@@ -383,7 +378,7 @@ if __name__ == "__main__":
 
             # calculate all losses for sentence
             loss_exprs = model.loss(instance.sentence, word_chars, gold_tags)
-            loss_expr = dy.esum(loss_exprs.values())
+            loss_expr = dy.esum(list(loss_exprs.values()))
             loss = loss_expr.scalar_value()
 
             # bail if loss is NaN
@@ -400,7 +395,7 @@ if __name__ == "__main__":
         logging.info("\n")
         logging.info("Epoch {} complete".format(epoch + 1))
         # here used to be a learning rate update, no longer supported in dynet 2.0
-        print trainer.status()
+        print(trainer.status())
 
         train_loss = train_loss / len(train_instances)
 
@@ -418,7 +413,7 @@ if __name__ == "__main__":
             d_instances = dev_instances[0:int(len(dev_instances)/10)]
         else:
             d_instances = dev_instances
-        with open("{}/devout_epoch-{:02d}.txt".format(options.log_dir, epoch + 1), 'w') as dev_writer:
+        with open("{}/devout_epoch-{:02d}.txt".format(options.log_dir, epoch + 1), 'w', encoding='utf-8') as dev_writer:
             for instance in bar(d_instances):
                 if len(instance.sentence) == 0: continue
                 gold_tags = instance.tags
@@ -462,7 +457,7 @@ if __name__ == "__main__":
                 dev_writer.write(("\n"
                                  + "\n".join(["\t".join(z) for z in zip([i2w[w] for w in instance.sentence],
                                                                              gold_strings, obs_strings, oov_strings)])
-                                 + "\n").encode('utf8'))
+                                 + "\n"))
 
 
         dev_loss = dev_loss / len(d_instances)
@@ -515,7 +510,7 @@ if __name__ == "__main__":
         t_instances = test_instances[0:int(len(test_instances)/10)]
     else:
         t_instances = test_instances
-    with open("{}/testout.txt".format(options.log_dir), 'w') as test_writer:
+    with open("{}/testout.txt".format(options.log_dir), 'w', encoding='utf-8') as test_writer:
         for instance in bar(t_instances):
             if len(instance.sentence) == 0: continue
             gold_tags = instance.tags
@@ -552,7 +547,7 @@ if __name__ == "__main__":
             test_writer.write(("\n"
                              + "\n".join(["\t".join(z) for z in zip([i2w[w] for w in instance.sentence],
                                                                          gold_strings, obs_strings, oov_strings)])
-                             + "\n").encode('utf8'))
+                             + "\n"))
 
 
     # log test results
