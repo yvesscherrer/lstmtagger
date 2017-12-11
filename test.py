@@ -13,7 +13,7 @@ Main application script for tagging parts-of-speech and morphosyntactic tags. Ru
 from collections import Counter, defaultdict
 from evaluate_morphotags import Evaluator
 from sys import maxsize
-from model import LSTMTagger, get_word_chars
+from model import LSTMTagger
 
 import collections
 import argparse
@@ -29,16 +29,10 @@ import utils
 
 __author__ = "Yuval Pinter and Robert Guthrie, 2017"
 
-Instance = collections.namedtuple("Instance", ["sentence", "tags"])
+Instance = collections.namedtuple("Instance", ["w_sentence", "c_sentence", "tags"])
 
 NONE_TAG = "<NONE>"
-START_TAG = "<START>"
-END_TAG = "<STOP>"
 POS_KEY = "POS"
-PADDING_CHAR = "<*>"
-
-DEFAULT_WORD_EMBEDDING_SIZE = 64
-DEFAULT_CHAR_EMBEDDING_SIZE = 20
 
 
 if __name__ == "__main__":
@@ -124,13 +118,12 @@ if __name__ == "__main__":
 		t_instances = test_instances
 	with open("{}/testout.txt".format(options.log_dir), 'w', encoding='utf-8') as test_writer:
 		for instance in bar(t_instances):
-			if len(instance.sentence) == 0: continue
+			if len(instance.w_sentence) == 0: continue
 			gold_tags = instance.tags
 			for att in model.attributes:
 				if att not in instance.tags:
-					gold_tags[att] = [t2is[att][NONE_TAG]] * len(instance.sentence)
-			word_chars = None if not model.use_char_rnn else get_word_chars(instance.sentence, i2w, c2i)
-			out_tags_set = model.tag_sentence(instance.sentence, word_chars)
+					gold_tags[att] = [t2is[att][NONE_TAG]] * len(instance.w_sentence)
+			out_tags_set = model.tag_sentence(instance.w_sentence, instance.c_sentence)
 
 			gold_strings = utils.morphotag_strings(i2ts, gold_tags)
 			obs_strings = utils.morphotag_strings(i2ts, out_tags_set)
@@ -140,7 +133,7 @@ if __name__ == "__main__":
 				out_tags = out_tags_set[att]
 
 				oov_strings = []
-				for word, gold, out in zip(instance.sentence, tags, out_tags):
+				for word, gold, out in zip(instance.w_sentence, tags, out_tags):
 					if gold == out:
 						test_correct[att] += 1
 					else:
@@ -157,7 +150,7 @@ if __name__ == "__main__":
 
 				test_total[att] += len(tags)
 			test_writer.write(("\n"
-							 + "\n".join(["\t".join(z) for z in zip([i2w[w] for w in instance.sentence],
+							 + "\n".join(["\t".join(z) for z in zip([i2w[w] for w in instance.w_sentence],
 																		 gold_strings, obs_strings, oov_strings)])
 							 + "\n"))
 

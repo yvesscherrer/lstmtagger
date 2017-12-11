@@ -17,7 +17,7 @@ import sys
 
 __author__ = "Yuval Pinter and Robert Guthrie, 2017 + Yves Scherrer"
 
-Instance = collections.namedtuple("Instance", ["sentence", "tags"])
+Instance = collections.namedtuple("Instance", ["w_sentence", "c_sentence", "tags"])
 
 UNK_TAG = "<UNK>"
 NONE_TAG = "<NONE>"
@@ -47,7 +47,8 @@ def read_file(filename, w2i, t2is, c2i, number_index=0, token_index=1, pos_index
 	with open(filename, "r", encoding="utf-8") as f:
 
 		# running sentence buffers (lines are tokens)
-		sentence = []
+		w_sentence = []
+		c_sentence = []
 		tags = collections.defaultdict(list)
 
 		# main file reading loop
@@ -61,14 +62,15 @@ def read_file(filename, w2i, t2is, c2i, number_index=0, token_index=1, pos_index
 			elif line.isspace():
 
 				# pad tag lists to sentence end
-				slen = len(sentence)
+				slen = len(w_sentence)
 				for seq in tags.values():
 					if len(seq) < slen:
 						seq.extend([0] * (slen - len(seq))) # 0 guaranteed below to represent NONE_TAG
 
 				# add sentence to dataset
-				instances.append(Instance(sentence, tags))
-				sentence = []
+				instances.append(Instance(w_sentence, c_sentence, tags))
+				w_sentence = []
+				c_sentence = []
 				tags = collections.defaultdict(list)
 
 			else:
@@ -100,7 +102,8 @@ def read_file(filename, w2i, t2is, c2i, number_index=0, token_index=1, pos_index
 						mt2i[val] = len(mt2i)
 
 				# add data to sentence buffer
-				sentence.append(w2i[word])
+				w_sentence.append(w2i[word])
+				c_sentence.append([c2i[PADDING_CHAR]] + [c2i[c] for c in word] + [c2i[PADDING_CHAR]])
 				tags[POS_KEY].append(t2is[POS_KEY][postag])
 				for k,v in morphotags.items():
 					mtags = tags[k]
@@ -128,10 +131,9 @@ if __name__ == "__main__":
 	parser.add_argument("--token-size", default=sys.maxsize, dest="token_size", type=int, help="Token count of training set (default - unlimited)")
 	options = parser.parse_args()
 
-	w2i = {} # mapping from word to index
+	w2i = {UNK_TAG: 0} # mapping from word to index
 	t2is = {} # mapping from attribute name to mapping from tag to index
-	c2i = {} # mapping from character to index, for char-RNN concatenations
-	
+	c2i = {UNK_CHAR_TAG: 0, PADDING_CHAR: 1} # mapping from character to index, for char-RNN concatenations
 
 	# read data from UD files
 	training_instances, training_vocab = read_file(options.training_data, w2i, t2is, c2i, options.number_index, options.token_index, options.pos_index, options.morph_index)
@@ -155,15 +157,10 @@ if __name__ == "__main__":
 				training_instances = training_instances[:i+1]
 				break
 	
-	#output = {"training_instances": training_instances, "training_vocab": training_vocab, "dev_instances": dev_instances, "dev_vocab": dev_vocab}
-	
 	# Add special tokens / tags / chars to dicts
-	w2i[UNK_TAG] = len(w2i)
 	for t2i in t2is.values():
 		t2i[START_TAG] = len(t2i)
 		t2i[END_TAG] = len(t2i)
-	c2i[UNK_CHAR_TAG] = len(c2i)
-	c2i[PADDING_CHAR] = len(c2i)
 	
 	with open(options.output + ".train.pkl", "wb") as outfile:
 		pickle.dump(training_instances, outfile)
@@ -177,14 +174,7 @@ if __name__ == "__main__":
 	vocab_output = {"training_vocab": training_vocab, "w2i": w2i, "t2is": t2is, "c2i": c2i}
 	with open(options.output + ".vocab.pkl", "wb") as outfile:
 		pickle.dump(vocab_output, outfile)
-
-	#output["w2i"] = w2i
-	#output["t2is"] = t2is
-	#output["c2i"] = c2i
-
-	# write outputs to files
-	#with open(options.output, "wb") as outfile:
-	#	pickle.dump(output, outfile)
+	
 	with open(options.vocab_file, "w", encoding="utf-8") as vocabfile:
 		for word in w2i.keys():
 			vocabfile.write(word + "\n")

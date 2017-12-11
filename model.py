@@ -19,13 +19,10 @@ import utils
 
 __author__ = "Yuval Pinter and Robert Guthrie, 2017"
 
-Instance = collections.namedtuple("Instance", ["sentence", "tags"])
+Instance = collections.namedtuple("Instance", ["w_sentence", "c_sentence", "tags"])
 
 NONE_TAG = "<NONE>"
-START_TAG = "<START>"
-END_TAG = "<STOP>"
 POS_KEY = "POS"
-PADDING_CHAR = "<*>"
 
 DEFAULT_WORD_EMBEDDING_SIZE = 64
 DEFAULT_CHAR_EMBEDDING_SIZE = 20
@@ -110,8 +107,8 @@ class LSTMTagger:
 
 	def build_tagging_graph(self, sentence, word_chars):
 		dy.renew_cg()
-
-		if word_chars == None:
+		
+		if not self.use_char_rnn:
 			embeddings = [self.word_rep(w, None) for w in sentence]
 		else:
 			embeddings = [self.word_rep(w, chars) for w, chars in zip(sentence, word_chars)]
@@ -159,6 +156,8 @@ class LSTMTagger:
 		For use in testing phase.
 		Tag sentence and return tags for each attribute, without caluclating loss.
 		'''
+		if not self.use_char_rnn:
+			word_chars = None
 		observations_set = self.build_tagging_graph(sentence, word_chars)
 		tag_seqs = {}
 		for att, observations in observations_set.items():
@@ -215,15 +214,12 @@ def get_att_prop(instances):
 	total_tokens = 0
 	att_counts = Counter()
 	for instance in instances:
-		total_tokens += len(instance.sentence)
+		total_tokens += len(instance.w_sentence)
 		for att, tags in instance.tags.items():
 			t2i = t2is[att]
 			att_counts[att] += len([t for t in tags if t != t2i.get(NONE_TAG, -1)])
 	return {att:(1.0 - (att_counts[att] / total_tokens)) for att in att_counts}
 
-def get_word_chars(sentence, i2w, c2i):
-	pad_char = c2i[PADDING_CHAR]
-	return [[pad_char] + [c2i[c] for c in i2w[word]] + [pad_char] for word in sentence]
 
 if __name__ == "__main__":
 
@@ -362,19 +358,16 @@ if __name__ == "__main__":
 
 		# main training loop
 		for idx,instance in enumerate(bar(train_instances)):
-			if len(instance.sentence) == 0: continue
+			if len(instance.w_sentence) == 0: continue
 
 			gold_tags = instance.tags
 			for att in model.attributes:
 				if att not in instance.tags:
 					# 'pad' entire sentence with none tags
-					gold_tags[att] = [t2is[att][NONE_TAG]] * len(instance.sentence)
-
-			word_chars = None if not options.use_char_rnn\
-								else get_word_chars(instance.sentence, i2w, c2i)
+					gold_tags[att] = [t2is[att][NONE_TAG]] * len(instance.w_sentence)
 
 			# calculate all losses for sentence
-			loss_exprs = model.loss(instance.sentence, word_chars, gold_tags)
+			loss_exprs = model.loss(instance.w_sentence, instance.c_sentence, gold_tags)
 			loss_expr = dy.esum(list(loss_exprs.values()))
 			loss = loss_expr.scalar_value()
 
@@ -382,7 +375,7 @@ if __name__ == "__main__":
 			if np.isnan(loss):
 				assert False, "NaN occured"
 
-			train_loss += (loss / len(instance.sentence))
+			train_loss += (loss / len(instance.w_sentence))
 
 			# backward pass and parameter update
 			loss_expr.backward()
@@ -412,15 +405,14 @@ if __name__ == "__main__":
 			d_instances = dev_instances
 		with open("{}/devout_epoch-{:02d}.txt".format(options.log_dir, epoch + 1), 'w', encoding='utf-8') as dev_writer:
 			for instance in bar(d_instances):
-				if len(instance.sentence) == 0: continue
+				if len(instance.w_sentence) == 0: continue
 				gold_tags = instance.tags
-				word_chars = None if not options.use_char_rnn else get_word_chars(instance.sentence, i2w, c2i)
 				for att in model.attributes:
 					if att not in instance.tags:
-						gold_tags[att] = [t2is[att][NONE_TAG]] * len(instance.sentence)
-				losses = model.loss(instance.sentence, word_chars, gold_tags)
+						gold_tags[att] = [t2is[att][NONE_TAG]] * len(instance.w_sentence)
+				losses = model.loss(instance.w_sentence, instance.c_sentence, gold_tags)
 				total_loss = sum([l.scalar_value() for l in losses.values()])
-				out_tags_set = model.tag_sentence(instance.sentence, word_chars)
+				out_tags_set = model.tag_sentence(instance.w_sentence, instance.c_sentence)
 
 				gold_strings = utils.morphotag_strings(i2ts, gold_tags)
 				obs_strings = utils.morphotag_strings(i2ts, out_tags_set)
@@ -431,7 +423,7 @@ if __name__ == "__main__":
 					correct_sent = True
 
 					oov_strings = []
-					for word, gold, out in zip(instance.sentence, tags, out_tags):
+					for word, gold, out in zip(instance.w_sentence, tags, out_tags):
 						if gold == out:
 							dev_correct[att] += 1
 						else:
@@ -449,10 +441,10 @@ if __name__ == "__main__":
 
 					dev_total[att] += len(tags)
 
-				dev_loss += (total_loss / len(instance.sentence))
+				dev_loss += (total_loss / len(instance.w_sentence))
 
 				dev_writer.write(("\n"
-								 + "\n".join(["\t".join(z) for z in zip([i2w[w] for w in instance.sentence],
+								 + "\n".join(["\t".join(z) for z in zip([i2w[w] for w in instance.w_sentence],
 																			 gold_strings, obs_strings, oov_strings)])
 								 + "\n"))
 
