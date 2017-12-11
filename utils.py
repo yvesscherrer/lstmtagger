@@ -3,20 +3,6 @@ import numpy as np
 NONE_TAG = "<NONE>"
 POS_KEY = "POS"
 
-class CSVLogger:
-
-	def __init__(self, filename, columns):
-		self.file = open(filename, "w")
-		self.columns = columns
-		self.file.write(','.join(columns) + "\n")
-
-	def add_column(self, data):
-		self.file.write(','.join([str(d) for d in data]) + "\n")
-		self.file.flush()
-
-	def close(self):
-		self.file.close()
-
 
 def read_pretrained_embeddings(filename, w2i):
 	word_to_embed = {}
@@ -70,7 +56,11 @@ def morphotag_strings(i2ts, tag_mapping, pos_separate_col=True):
 	for j in range(senlen):
 		place_strs = []
 		for att, seq in tag_mapping.items():
-			val = i2ts[att][seq[j]]
+			if j >= len(seq):
+				print("Accessing inexistent index: attribute {}, position {}, sequence {}".format(att, j, str(tag_mapping.items())))
+				val = NONE_TAG
+			else:
+				val = i2ts[att][seq[j]]
 			if pos_separate_col and att == POS_KEY:
 				pos_str = val
 			elif val != NONE_TAG:

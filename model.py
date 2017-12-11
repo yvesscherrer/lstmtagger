@@ -3,7 +3,6 @@ Main application script for tagging parts-of-speech and morphosyntactic tags. Ru
 '''
 from collections import Counter, defaultdict
 from evaluate_morphotags import Evaluator
-from sys import maxsize
 
 import collections
 import argparse
@@ -12,6 +11,7 @@ import pickle
 import logging
 import progressbar
 import os
+import csv
 import dynet as dy
 import numpy as np
 
@@ -52,7 +52,7 @@ class LSTMTagger:
 		:param vocab_size: number of words in model (ignored if pre-trained embeddings are given)
 		:param word_embedding_dim: desired word embedding dimension (ignored if pre-trained embeddings are given)
 		'''
-		self.model = dy.Model()
+		self.model = dy.ParameterCollection()	# ParameterCollection is the new name for Model
 		self.tagset_sizes = tagset_sizes
 		self.attributes = tagset_sizes.keys()
 		self.we_update = not no_we_update
@@ -88,7 +88,8 @@ class LSTMTagger:
 		self.lstm_to_tags_bias = {}
 		self.mlp_out = {}
 		self.mlp_out_bias = {}
-		for att, set_size in tagset_sizes.items():
+		for att in sorted(tagset_sizes):	# need to be in consistent order for saving and loading
+			set_size = tagset_sizes[att]
 			self.lstm_to_tags_params[att] = self.model.add_parameters((set_size, hidden_dim), name=bytes(att+"H", 'utf-8'))
 			self.lstm_to_tags_bias[att] = self.model.add_parameters(set_size, name=bytes(att+"Hb", 'utf-8'))
 			self.mlp_out[att] = self.model.add_parameters((set_size, set_size), name=bytes(att+"O", 'utf-8'))
@@ -183,8 +184,8 @@ class LSTMTagger:
 		'''
 		self.model.save(file_name)
 		
-		with open(file_name + "-atts", 'w') as attdict:
-			attdict.write("\t".join(sorted(self.attributes)))
+		#with open(file_name + "-atts", 'w') as attdict:
+		#	attdict.write("\t".join(sorted(self.attributes)))
 
 	def old_save(self, file_name):
 		'''
@@ -230,13 +231,11 @@ if __name__ == "__main__":
 	# Argument parsing
 	# ===-----------------------------------------------------------------------===
 	parser = argparse.ArgumentParser()
-	parser.add_argument("--dataset", required=True, dest="dataset", help=".pkl file to use")
+	parser.add_argument("--dataset", required=True, dest="dataset", help="file id of .pkl files to use")
 	parser.add_argument("--word-embeddings", dest="word_embeddings", help="File from which to read in pretrained embeds (if not supplied, will be random)")
 	parser.add_argument("--num-epochs", default=20, dest="num_epochs", type=int, help="Number of full passes through training set (default - 20)")
 	parser.add_argument("--num-lstm-layers", default=2, dest="lstm_layers", type=int, help="Number of LSTM layers (default - 2)")
 	parser.add_argument("--hidden-dim", default=128, dest="hidden_dim", type=int, help="Size of LSTM hidden layers (default - 128)")
-	parser.add_argument("--training-sentence-size", default=maxsize, dest="training_sentence_size", type=int, help="Instance count of training set (default - unlimited)")
-	parser.add_argument("--token-size", default=maxsize, dest="token_size", type=int, help="Token count of training set (default - unlimited)")
 	parser.add_argument("--learning-rate", default=0.01, dest="learning_rate", type=float, help="Initial learning rate (default - 0.01)")
 	parser.add_argument("--dropout", default=-1, dest="dropout", type=float, help="Amount of dropout to apply to LSTM part of graph (default - off)")
 	parser.add_argument("--no-we-update", dest="no_we_update", action="store_true", help="Word Embeddings aren't updated")
@@ -255,7 +254,8 @@ if __name__ == "__main__":
 	if not os.path.exists(options.log_dir):
 		os.mkdir(options.log_dir)
 	logging.basicConfig(filename=options.log_dir + "/log.txt", filemode="w", format="%(message)s", level=logging.INFO)
-	train_dev_cost = utils.CSVLogger(options.log_dir + "/train_dev.log", ["Train.cost", "Dev.cost"])
+	train_dev_cost = csv.writer(open(options.log_dir + "/train_dev.log", 'w'))
+	train_dev_cost.writerow(["Train.cost", "Dev.cost"])
 
 
 	# ===-----------------------------------------------------------------------===
@@ -269,13 +269,11 @@ if __name__ == "__main__":
 	Num Epochs: {}
 	LSTM: {} layers, {} hidden dim
 	Concatenating character LSTM: {}
-	Training set size limit: {} sentences or {} tokens
 	Initial Learning Rate: {}
 	Dropout: {}
 	LSTM loss weights proportional to attribute frequency: {}
 
-	""".format(options.dataset, options.word_embeddings, options.num_epochs, options.lstm_layers, options.hidden_dim, options.use_char_rnn, \
-			   options.training_sentence_size, options.token_size, options.learning_rate, options.dropout, options.loss_prop))
+	""".format(options.dataset, options.word_embeddings, options.num_epochs, options.lstm_layers, options.hidden_dim, options.use_char_rnn, options.learning_rate, options.dropout, options.loss_prop))
 
 	if options.debug:
 		print("DEBUG MODE")
@@ -283,36 +281,17 @@ if __name__ == "__main__":
 	# ===-----------------------------------------------------------------------===
 	# Read in dataset
 	# ===-----------------------------------------------------------------------===
-	dataset = pickle.load(open(options.dataset, "rb"))
-	w2i = dataset["w2i"]
-	t2is = dataset["t2is"]
-	c2i = dataset["c2i"]
+	
+	training_instances = pickle.load(open(options.dataset + ".train.pkl", "rb"))
+	dev_instances = pickle.load(open(options.dataset + ".dev.pkl", "rb"))
+	vocab_dataset = pickle.load(open(options.dataset + ".vocab.pkl", "rb"))
+	training_vocab = vocab_dataset["training_vocab"]
+	w2i = vocab_dataset["w2i"]
+	t2is = vocab_dataset["t2is"]
+	c2i = vocab_dataset["c2i"]
 	i2w = { i: w for w, i in w2i.items() } # Inverse mapping
 	i2ts = { att: {i: t for t, i in t2i.items()} for att, t2i in t2is.items() }
 	i2c = { i: c for c, i in c2i.items() }
-
-	training_instances = dataset["training_instances"]
-	training_vocab = dataset["training_vocab"]
-	dev_instances = dataset["dev_instances"]
-	dev_vocab = dataset["dev_vocab"]
-	test_instances = dataset["test_instances"]
-
-	# trim training set for size evaluation (sentence based)
-	if len(training_instances) > options.training_sentence_size:
-		random.shuffle(training_instances)
-		training_instances = training_instances[:options.training_sentence_size]
-
-	# trim training set for size evaluation (token based)
-	training_corpus_size = sum(training_vocab.values())
-	if training_corpus_size > options.token_size:
-		random.shuffle(training_instances)
-		cumulative_tokens = 0
-		cutoff_index = -1
-		for i,inst in enumerate(training_instances):
-			cumulative_tokens += len(inst.sentence)
-			if cumulative_tokens >= options.token_size:
-				training_instances = training_instances[:i+1]
-				break
 
 	# ===-----------------------------------------------------------------------===
 	# Build model and trainer
@@ -340,6 +319,24 @@ if __name__ == "__main__":
 					   att_props=att_props,
 					   vocab_size=len(w2i),
 					   word_embedding_dim=DEFAULT_WORD_EMBEDDING_SIZE)
+	
+	setting_dict = {
+		"tagset_sizes": tag_set_sizes,
+		"num_lstm_layers": options.lstm_layers,
+		"hidden_dim": options.hidden_dim,
+		"word_embeddings": word_embeddings,
+		"no_we_update": options.no_we_update,
+		"use_char_rnn": options.use_char_rnn,
+		"charset_size": len(c2i),
+		"char_embedding_dim": DEFAULT_CHAR_EMBEDDING_SIZE,
+		"att_props": att_props,
+		"vocab_size": len(w2i),
+		"word_embedding_dim": DEFAULT_WORD_EMBEDDING_SIZE,
+		"attributes": sorted(model.attributes)
+	}
+	setting_file_name = "{}/model_settings.pkl".format(options.log_dir)
+	with open(setting_file_name, "wb") as outfile:
+		pickle.dump(setting_dict, outfile)
 
 	trainer = dy.MomentumSGDTrainer(model.model, options.learning_rate, 0.9)
 	logging.info("Training Algorithm: {}".format(type(trainer)))
@@ -395,7 +392,7 @@ if __name__ == "__main__":
 		logging.info("\n")
 		logging.info("Epoch {} complete".format(epoch + 1))
 		# here used to be a learning rate update, no longer supported in dynet 2.0
-		print(trainer.status())
+		#print(trainer.status())
 
 		train_loss = train_loss / len(train_instances)
 
@@ -476,7 +473,7 @@ if __name__ == "__main__":
 
 		logging.info("Train Loss: {}".format(train_loss))
 		logging.info("Dev Loss: {}".format(dev_loss))
-		train_dev_cost.add_column([train_loss, dev_loss])
+		train_dev_cost.writerow([train_loss, dev_loss])
 
 		if epoch > 1 and epoch % 10 != 0: # leave outputs from epochs 1,10,20, etc.
 			old_devout_file_name = "{}/devout_epoch-{:02d}.txt".format(options.log_dir, epoch)
@@ -491,73 +488,5 @@ if __name__ == "__main__":
 				logging.info("Removing files from previous epoch.")
 				old_model_file_name = "{}/model_epoch-{:02d}.bin".format(options.log_dir, epoch)
 				os.remove(old_model_file_name)
-				os.remove(old_model_file_name + "-atts")
-
+				#os.remove(old_model_file_name + "-atts")
 		# epoch loop ends
-
-	# evaluate test data (once)
-	logging.info("\n")
-	logging.info("Number test instances: {}".format(len(test_instances)))
-	model.disable_dropout()
-	test_correct = Counter()
-	test_total = Counter()
-	test_oov_total = Counter()
-	bar = progressbar.ProgressBar()
-	total_wrong = Counter()
-	total_wrong_oov = Counter()
-	f1_eval = Evaluator(m = 'att')
-	if options.debug:
-		t_instances = test_instances[0:int(len(test_instances)/10)]
-	else:
-		t_instances = test_instances
-	with open("{}/testout.txt".format(options.log_dir), 'w', encoding='utf-8') as test_writer:
-		for instance in bar(t_instances):
-			if len(instance.sentence) == 0: continue
-			gold_tags = instance.tags
-			for att in model.attributes:
-				if att not in instance.tags:
-					gold_tags[att] = [t2is[att][NONE_TAG]] * len(instance.sentence)
-			word_chars = word_chars = None if not options.use_char_rnn else get_word_chars(instance.sentence, i2w, c2i)
-			out_tags_set = model.tag_sentence(instance.sentence, word_chars)
-
-			gold_strings = utils.morphotag_strings(i2ts, gold_tags)
-			obs_strings = utils.morphotag_strings(i2ts, out_tags_set)
-			for g, o in zip(gold_strings, obs_strings):
-				f1_eval.add_instance(utils.split_tagstring(g, has_pos=True), utils.split_tagstring(o, has_pos=True))
-			for att, tags in gold_tags.items():
-				out_tags = out_tags_set[att]
-
-				oov_strings = []
-				for word, gold, out in zip(instance.sentence, tags, out_tags):
-					if gold == out:
-						test_correct[att] += 1
-					else:
-						# Got the wrong tag
-						total_wrong[att] += 1
-						if i2w[word] not in training_vocab:
-							total_wrong_oov[att] += 1
-
-					if i2w[word] not in training_vocab:
-						test_oov_total[att] += 1
-						oov_strings.append("OOV")
-					else:
-						oov_strings.append("")
-
-				test_total[att] += len(tags)
-			test_writer.write(("\n"
-							 + "\n".join(["\t".join(z) for z in zip([i2w[w] for w in instance.sentence],
-																		 gold_strings, obs_strings, oov_strings)])
-							 + "\n"))
-
-
-	# log test results
-	logging.info("POS Test Accuracy: {}".format(test_correct[POS_KEY] / test_total[POS_KEY]))
-	logging.info("POS % Test OOV accuracy: {}".format((test_oov_total[POS_KEY] - total_wrong_oov[POS_KEY]) / test_oov_total[POS_KEY]))
-	if total_wrong[POS_KEY] > 0:
-		logging.info("POS % Test Wrong that are OOV: {}".format(total_wrong_oov[POS_KEY] / total_wrong[POS_KEY]))
-	for attr in t2is.keys():
-		if attr != POS_KEY:
-			logging.info("{} F1: {}".format(attr, f1_eval.mic_f1(att = attr)))
-	logging.info("Total attribute F1s: {} micro, {} macro, POS included = {}".format(f1_eval.mic_f1(), f1_eval.mac_f1(), False))
-
-	logging.info("Total test tokens: {}, Total test OOV: {}, % OOV: {}".format(test_total[POS_KEY], test_oov_total[POS_KEY], test_oov_total[POS_KEY] / test_total[POS_KEY]))
