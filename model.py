@@ -1,10 +1,11 @@
 '''
-Main application script for tagging parts-of-speech and morphosyntactic tags. Run with --help for command line arguments.
+Main application script for training a tagger for parts-of-speech and morphosyntactic tags. Run with --help for command line arguments.
 '''
 from collections import Counter, defaultdict
 from evaluate_morphotags import Evaluator
+from make_dataset import Instance
 
-import collections
+#import collections
 import argparse
 import random
 import pickle
@@ -19,10 +20,9 @@ import utils
 
 __author__ = "Yuval Pinter and Robert Guthrie, 2017 + Yves Scherrer"
 
-Instance = collections.namedtuple("Instance", ["w_sentence", "c_sentence", "tags"])
+#Instance = collections.namedtuple("Instance", ["w_sentence", "c_sentence", "tags"])
 
 NONE_TAG = "<NONE>"
-UNK_TAG = "<UNK>"
 PADDING_CHAR = "<*>"
 POS_KEY = "POS"
 
@@ -241,6 +241,78 @@ def get_att_prop(instances):
 	return {att:(1.0 - (att_counts[att] / total_tokens)) for att in att_counts}
 
 
+def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab):
+	model.disable_dropout()
+	loss = 0.0
+	correct = Counter()
+	total = Counter()
+	oov_total = Counter()
+	bar = progressbar.ProgressBar()
+	total_wrong = Counter()
+	total_wrong_oov = Counter()
+	f1_eval = Evaluator(m = 'att')
+	
+	with open(outfilename, 'w', encoding='utf-8') as writer:
+		for instance in bar(instances):
+			if len(instance.w_sentence) == 0: continue
+			gold_tags = instance.tags
+			for att in model.attributes:
+				if att not in instance.tags:
+					gold_tags[att] = [t2is[att][NONE_TAG]] * len(instance.w_sentence)
+			losses = model.loss(instance.w_sentence, instance.c_sentence, gold_tags)
+			total_loss = sum([l.scalar_value() for l in losses.values()])
+			out_tags_set = model.tag_sentence(instance.w_sentence, instance.c_sentence)
+
+			gold_strings = utils.morphotag_strings(i2ts, gold_tags)
+			obs_strings = utils.morphotag_strings(i2ts, out_tags_set)
+			for g, o in zip(gold_strings, obs_strings):
+				f1_eval.add_instance(utils.split_tagstring(g, has_pos=True), utils.split_tagstring(o, has_pos=True))
+			for att, tags in gold_tags.items():
+				out_tags = out_tags_set[att]
+				correct_sent = True
+
+				oov_strings = []
+				for word, gold, out in zip(instance.w_sentence, tags, out_tags):
+					if gold == out:
+						correct[att] += 1
+					else:
+						# Got the wrong tag
+						total_wrong[att] += 1
+						correct_sent = False
+						if i2w[word] not in training_vocab:
+							total_wrong_oov[att] += 1
+
+					if i2w[word] not in training_vocab:
+						oov_total[att] += 1
+						oov_strings.append("OOV")
+					else:
+						oov_strings.append("")
+
+				total[att] += len(tags)
+
+			loss += (total_loss / len(instance.w_sentence))
+
+			# regenerate output words from c_sentence, removing the padding characters
+			out_sentence = [("".join([i2c[c] for c in w])).replace(PADDING_CHAR, "") for w in instance.c_sentence]
+			writer.write("\n" + "\n".join(["\t".join(z) for z in zip(out_sentence, gold_strings, obs_strings, oov_strings)]) + "\n")
+
+	loss = loss / len(instances)
+
+	# log results
+	logging.info("Number of instances: {}".format(len(instances)))
+	logging.info("POS Accuracy: {}".format(correct[POS_KEY] / total[POS_KEY]))
+	logging.info("POS % OOV accuracy: {}".format((oov_total[POS_KEY] - total_wrong_oov[POS_KEY]) / oov_total[POS_KEY]))
+	if total_wrong[POS_KEY] > 0:
+		logging.info("POS % Wrong that are OOV: {}".format(total_wrong_oov[POS_KEY] / total_wrong[POS_KEY]))
+	for attr in model.attributes:
+		if attr != POS_KEY:
+			logging.info("{} F1: {}".format(attr, f1_eval.mic_f1(att = attr)))
+	logging.info("Total attribute F1s: {} micro, {} macro, POS included = {}".format(f1_eval.mic_f1(), f1_eval.mac_f1(), False))
+
+	logging.info("Total tokens: {}, Total OOV: {}, % OOV: {}".format(total[POS_KEY], oov_total[POS_KEY], oov_total[POS_KEY] / total[POS_KEY]))
+	return loss
+
+
 if __name__ == "__main__":
 
 	# ===-----------------------------------------------------------------------===
@@ -347,9 +419,6 @@ if __name__ == "__main__":
 	trainer = dy.MomentumSGDTrainer(model.model, options.learning_rate, 0.9)
 	logging.info("Training Algorithm: {}".format(type(trainer)))
 
-	logging.info("Number training instances: {}".format(len(training_instances)))
-	logging.info("Number dev instances: {}".format(len(dev_instances)))
-
 	for epoch in range(int(options.num_epochs)):
 		bar = progressbar.ProgressBar()
 
@@ -396,89 +465,25 @@ if __name__ == "__main__":
 		# log epoch's train phase
 		logging.info("\n")
 		logging.info("Epoch {} complete".format(epoch + 1))
+		logging.info("Number of training instances: {}".format(len(training_instances)))
+		logging.info("Training Loss: {}".format(train_loss))
+		logging.info("")
 		# here used to be a learning rate update, no longer supported in dynet 2.0
 		#print(trainer.status())
 
 		# evaluate dev data
-		model.disable_dropout()
-		dev_loss = 0.0
-		dev_correct = Counter()
-		dev_total = Counter()
-		dev_oov_total = Counter()
-		bar = progressbar.ProgressBar()
-		total_wrong = Counter()
-		total_wrong_oov = Counter()
-		f1_eval = Evaluator(m = 'att')
 		if options.debug:
 			d_instances = dev_instances[0:int(len(dev_instances)/10)]
 		else:
 			d_instances = dev_instances
 			
 		if epoch+1 == options.num_epochs:
-				new_devout_file_name = "{}/devout_final.txt".format(options.model_dir)
-			else:
-				new_devout_file_name = "{}/devout_epoch{:02d}.bin".format(options.model_dir, epoch + 1)
-		with open(new_devout_file_name, 'w', encoding='utf-8') as dev_writer:
-			for instance in bar(d_instances):
-				if len(instance.w_sentence) == 0: continue
-				gold_tags = instance.tags
-				for att in model.attributes:
-					if att not in instance.tags:
-						gold_tags[att] = [t2is[att][NONE_TAG]] * len(instance.w_sentence)
-				losses = model.loss(instance.w_sentence, instance.c_sentence, gold_tags)
-				total_loss = sum([l.scalar_value() for l in losses.values()])
-				out_tags_set = model.tag_sentence(instance.w_sentence, instance.c_sentence)
-
-				gold_strings = utils.morphotag_strings(i2ts, gold_tags)
-				obs_strings = utils.morphotag_strings(i2ts, out_tags_set)
-				for g, o in zip(gold_strings, obs_strings):
-					f1_eval.add_instance(utils.split_tagstring(g, has_pos=True), utils.split_tagstring(o, has_pos=True))
-				for att, tags in gold_tags.items():
-					out_tags = out_tags_set[att]
-					correct_sent = True
-
-					oov_strings = []
-					for word, gold, out in zip(instance.w_sentence, tags, out_tags):
-						if gold == out:
-							dev_correct[att] += 1
-						else:
-							# Got the wrong tag
-							total_wrong[att] += 1
-							correct_sent = False
-							if i2w[word] not in training_vocab:
-								total_wrong_oov[att] += 1
-
-						if i2w[word] not in training_vocab:
-							dev_oov_total[att] += 1
-							oov_strings.append("OOV")
-						else:
-							oov_strings.append("")
-
-					dev_total[att] += len(tags)
-
-				dev_loss += (total_loss / len(instance.w_sentence))
-
-				# regenerate output words from c_sentence, removing the padding characters
-				out_sentence = [("".join([i2c[c] for c in w])).replace(PADDING_CHAR, "") for w in instance.c_sentence]
-				dev_writer.write("\n"
-								 + "\n".join(["\t".join(z) for z in zip(out_sentence, gold_strings, obs_strings, oov_strings)])
-								 + "\n")
-
-		dev_loss = dev_loss / len(d_instances)
-
-		# log epoch results
-		logging.info("POS Dev Accuracy: {}".format(dev_correct[POS_KEY] / dev_total[POS_KEY]))
-		logging.info("POS % OOV accuracy: {}".format((dev_oov_total[POS_KEY] - total_wrong_oov[POS_KEY]) / dev_oov_total[POS_KEY]))
-		if total_wrong[POS_KEY] > 0:
-			logging.info("POS % Wrong that are OOV: {}".format(total_wrong_oov[POS_KEY] / total_wrong[POS_KEY]))
-		for attr in model.attributes:
-			if attr != POS_KEY:
-				logging.info("{} F1: {}".format(attr, f1_eval.mic_f1(att = attr)))
-		logging.info("Total attribute F1s: {} micro, {} macro, POS included = {}".format(f1_eval.mic_f1(), f1_eval.mac_f1(), False))
-
-		logging.info("Total dev tokens: {}, Total dev OOV: {}, % OOV: {}".format(dev_total[POS_KEY], dev_oov_total[POS_KEY], dev_oov_total[POS_KEY] / dev_total[POS_KEY]))
-
-		logging.info("Train Loss: {}".format(train_loss))
+			new_devout_file_name = "{}/devout_final.txt".format(options.model_dir)
+		else:
+			new_devout_file_name = "{}/devout_epoch{:02d}.txt".format(options.model_dir, epoch + 1)
+		
+		logging.info("Evaluate dev data")
+		dev_loss = evaluate(model, d_instances, new_devout_file_name, t2is, i2ts, i2w, i2c, training_vocab)
 		logging.info("Dev Loss: {}".format(dev_loss))
 		train_dev_cost.writerow([train_loss, dev_loss])
 
@@ -492,6 +497,7 @@ if __name__ == "__main__":
 				new_model_file_name = "{}/model_final.bin".format(options.model_dir)
 			else:
 				new_model_file_name = "{}/model_epoch{:02d}.bin".format(options.model_dir, epoch + 1)
+			logging.info("")
 			logging.info("Saving model to {}".format(new_model_file_name))
 			model.save(new_model_file_name)
 			if epoch > 1 and epoch % 10 != 0: # leave models from epochs 1,10,20, etc.

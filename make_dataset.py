@@ -27,12 +27,13 @@ UNK_CHAR_TAG = "<?>"
 PADDING_CHAR = "<*>"
 POS_KEY = "POS"
 
-def read_file(filename, w2i, t2is, c2i, vocab_counter, number_index=0, token_index=1, pos_index=3, morph_index=5, update_vocab=True):
+def read_file(filename, w2i, t2is, c2i, vocab_counter, number_index=0, w_token_index=1, c_token_index=1, pos_index=3, morph_index=5, update_vocab=True):
 	"""
 	Read in a dataset and turn it into a list of instances.
 	Modifies the w2i, t2is and c2i dicts, adding new words/attributes/tags/chars
 	as it sees them.
-	token_index: field in which the token representation is stored
+	w_token_index: field in which the token representation used for the word embeddings is stored
+	c_token_index: field in which the token representation used for the character embeddings is stored
 	pos_index: field in which the main POS is stored
 	morph_index: field in which the morphological tags are stored (-1 if no morphology)
 	"""
@@ -76,23 +77,24 @@ def read_file(filename, w2i, t2is, c2i, vocab_counter, number_index=0, token_ind
 
 				# parse token information in line
 				data = line.split("\t")
-				if '-' in data[token_index]: # Some UD languages have contractions on a separate line, we don't want to include them also
+				if ('-' in data[w_token_index]) or ('-' in data[c_token_index]) : # Some UD languages have contractions on a separate line, we don't want to include them also
 					continue
 				idx = int(data[number_index])
-				word = data[token_index]
+				w_word = data[w_token_index]
+				c_word = data[c_token_index]
 				postag = data[pos_index] if pos_index != morph_index else data[pos_index].split("|")[0]
 				morphotags = {} if morph_index < 0 else utils.split_tagstring(data[morph_index], uni_key=False, has_pos=(pos_index == morph_index))
 
 				if update_vocab:
 					# ensure counts and dictionary population
-					vocab_counter[word] += 1
+					vocab_counter[w_word] += 1
 				
-					if word not in w2i:
-						w2i[word] = len(w2i)
+					if w_word not in w2i:
+						w2i[w_word] = len(w2i)
 					pt2i = t2is[POS_KEY]
 					if postag not in pt2i:
 						pt2i[postag] = len(pt2i)
-					for c in word:
+					for c in c_word:
 						if c not in c2i:
 							c2i[c] = len(c2i)
 					for key, val in morphotags.items():
@@ -103,8 +105,8 @@ def read_file(filename, w2i, t2is, c2i, vocab_counter, number_index=0, token_ind
 							mt2i[val] = len(mt2i)
 
 				# add data to sentence buffer
-				w_sentence.append(w2i.get(word, w2i[UNK_TAG]))
-				c_sentence.append([c2i[PADDING_CHAR]] + [c2i.get(c, c2i[UNK_CHAR_TAG]) for c in word] + [c2i[PADDING_CHAR]])
+				w_sentence.append(w2i.get(w_word, w2i[UNK_TAG]))
+				c_sentence.append([c2i[PADDING_CHAR]] + [c2i.get(c, c2i[UNK_CHAR_TAG]) for c in c_word] + [c2i[PADDING_CHAR]])
 				tags[POS_KEY].append(t2is[POS_KEY].get(postag, t2is[POS_KEY][NONE_TAG]))
 				for k,v in morphotags.items():
 					mtags = tags[k]
@@ -133,7 +135,8 @@ if __name__ == "__main__":
 	# File format (default options are fine for UD-formatted files)
 	# Call this script several times if not all datasets are formatted in the same way
 	parser.add_argument("--number-index", dest="number_index", type=int, help="Field in which the word numbers are stored (default: 0)", default=0)
-	parser.add_argument("--token-index", dest="token_index", type=int, help="Field in which the tokens are stored (default: 1)", default=1)
+	parser.add_argument("--w-token-index", dest="w_token_index", type=int, help="Field in which the tokens used for the word embeddings are stored (default: 1)", default=1)
+	parser.add_argument("--c-token-index", dest="c_token_index", type=int, help="Field in which the tokens used for the character embeddings are stored (default: 1)", default=1)
 	parser.add_argument("--pos-index", dest="pos_index", type=int, help="Field in which the main POS is stored (default, UD tags: 3) (original non-UD tag: 4)", default=3)
 	parser.add_argument("--morph-index", dest="morph_index", type=int, help="Field in which the morphology tags are stored (default: 5); use negative value if morphosyntactic tags should not be considered", default=5)
 	# Options for easily reducing the size of the training data
@@ -160,7 +163,7 @@ if __name__ == "__main__":
 	
 	# read training data
 	if options.training_data:
-		training_instances = read_file(options.training_data, w2i, t2is, c2i, training_vocab, options.number_index, options.token_index, options.pos_index, options.morph_index, update_vocab=True)
+		training_instances = read_file(options.training_data, w2i, t2is, c2i, training_vocab, options.number_index, options.w_token_index, options.c_token_index, options.pos_index, options.morph_index, update_vocab=True)
 		
 		# trim training set for size evaluation (sentence based)
 		if len(training_instances) > options.training_sentence_size:
@@ -190,7 +193,7 @@ if __name__ == "__main__":
 	# read dev data
 	if options.dev_data:
 		dev_vocab = collections.Counter()
-		dev_instances = read_file(options.dev_data, w2i, t2is, c2i, dev_vocab, options.number_index, options.token_index, options.pos_index, options.morph_index, update_vocab=False)
+		dev_instances = read_file(options.dev_data, w2i, t2is, c2i, dev_vocab, options.number_index, options.w_token_index, options.c_token_index, options.pos_index, options.morph_index, update_vocab=False)
 		
 		with open(options.model_dir + "/" + options.dev_data_out, "wb") as outfile:
 			pickle.dump(dev_instances, outfile)
@@ -198,7 +201,7 @@ if __name__ == "__main__":
 	# read test data
 	if options.test_data:
 		test_vocab = collections.Counter()
-		test_instances = read_file(options.test_data, w2i, t2is, c2i, test_vocab, options.number_index, options.token_index, options.pos_index, options.morph_index, update_vocab=False)
+		test_instances = read_file(options.test_data, w2i, t2is, c2i, test_vocab, options.number_index, options.w_token_index, options.c_token_index, options.pos_index, options.morph_index, update_vocab=False)
 		
 		with open(options.model_dir + "/" + options.test_data_out, "wb") as outfile:
 			pickle.dump(test_instances, outfile)

@@ -1,40 +1,17 @@
-# what do we need for testing?
-# test data + index mappings (stored in model, or in dataset?)
-# model + parameters (is everything restored?)
-# evaluation procedure as below
-
-# todo inside model:
-# save_settings(): pickle of a settings dict that allows us to recreate an LSTMTagger object and that contains the lookup dicts; this procedure is called once at the start of the training process
-# save_parameters(): rename save(); this is created after each n epochs (as now) and allows to populate the parameters within the LSTMTagger created from save_settings()
-
 '''
-Main application script for tagging parts-of-speech and morphosyntactic tags. Run with --help for command line arguments.
+Main application script for loading a pre-trained tagging model and evaluating it on a test file. Run with --help for command line arguments.
 '''
-from collections import Counter, defaultdict
-from evaluate_morphotags import Evaluator
-from sys import maxsize
-from model import LSTMTagger
 
-import collections
+from model import LSTMTagger, evaluate
+from make_dataset import Instance
 import argparse
-import random
 import pickle
 import logging
-import progressbar
 import os
-import dynet as dy
-import numpy as np
-
-import utils
 
 __author__ = "Yuval Pinter and Robert Guthrie, 2017 + Yves Scherrer"
 
-Instance = collections.namedtuple("Instance", ["w_sentence", "c_sentence", "tags"])
-
-NONE_TAG = "<NONE>"
-UNK_TAG = "<UNK>"
-PADDING_CHAR = "<*>"
-POS_KEY = "POS"
+#Instance = collections.namedtuple("Instance", ["w_sentence", "c_sentence", "tags"])
 
 
 if __name__ == "__main__":
@@ -88,8 +65,6 @@ if __name__ == "__main__":
 	i2ts = { att: {i: t for t, i in t2i.items()} for att, t2i in t2is.items() }
 	i2c = { i: c for c, i in c2i.items() }
 	
-	test_instances = pickle.load(open(options.model_dir + "/" + options.test_file, "rb"))
-	
 	settings = pickle.load(open(options.model_dir + "/" + options.settings_file, "rb"))
 	model = LSTMTagger(tagset_sizes=settings["tagset_sizes"],
 					   num_lstm_layers=settings["num_lstm_layers"],
@@ -104,69 +79,12 @@ if __name__ == "__main__":
 					   word_embedding_dim=settings["word_embedding_dim"],
 					   populate_from_file=options.model_dir + "/" + options.param_file)
 
-	# evaluate test data (once)
-	logging.info("\n")
-	logging.info("Number test instances: {}".format(len(test_instances)))
-	model.disable_dropout()
-	test_correct = Counter()
-	test_total = Counter()
-	test_oov_total = Counter()
-	bar = progressbar.ProgressBar()
-	total_wrong = Counter()
-	total_wrong_oov = Counter()
-	f1_eval = Evaluator(m = 'att')
+	# evaluate test data
+	test_instances = pickle.load(open(options.model_dir + "/" + options.test_file, "rb"))
+	logging.info("Evaluate test data")
 	if options.debug:
 		t_instances = test_instances[0:int(len(test_instances)/10)]
 	else:
 		t_instances = test_instances
-	with open("{}/testout.txt".format(options.model_dir), 'w', encoding='utf-8') as test_writer:
-		for instance in bar(t_instances):
-			if len(instance.w_sentence) == 0: continue
-			gold_tags = instance.tags
-			for att in model.attributes:
-				if att not in instance.tags:
-					gold_tags[att] = [t2is[att][NONE_TAG]] * len(instance.w_sentence)
-			out_tags_set = model.tag_sentence(instance.w_sentence, instance.c_sentence)
-
-			gold_strings = utils.morphotag_strings(i2ts, gold_tags)
-			obs_strings = utils.morphotag_strings(i2ts, out_tags_set)
-			for g, o in zip(gold_strings, obs_strings):
-				f1_eval.add_instance(utils.split_tagstring(g, has_pos=True), utils.split_tagstring(o, has_pos=True))
-			for att, tags in gold_tags.items():
-				out_tags = out_tags_set[att]
-
-				oov_strings = []
-				for word, gold, out in zip(instance.w_sentence, tags, out_tags):
-					if gold == out:
-						test_correct[att] += 1
-					else:
-						# Got the wrong tag
-						total_wrong[att] += 1
-						if i2w[word] not in training_vocab:
-							total_wrong_oov[att] += 1
-
-					if i2w[word] not in training_vocab:
-						test_oov_total[att] += 1
-						oov_strings.append("OOV")
-					else:
-						oov_strings.append("")
-
-				test_total[att] += len(tags)
-			# regenerate output words from c_sentence, removing the padding characters
-			out_sentence = [("".join([i2c[c] for c in w])).replace(PADDING_CHAR, "") for w in instance.c_sentence]
-			test_writer.write("\n"
-							 + "\n".join(["\t".join(z) for z in zip(out_sentence, gold_strings, obs_strings, oov_strings)])
-							 + "\n")
-
-
-	# log test results
-	logging.info("POS Test Accuracy: {}".format(test_correct[POS_KEY] / test_total[POS_KEY]))
-	logging.info("POS % Test OOV accuracy: {}".format((test_oov_total[POS_KEY] - total_wrong_oov[POS_KEY]) / test_oov_total[POS_KEY]))
-	if total_wrong[POS_KEY] > 0:
-		logging.info("POS % Test Wrong that are OOV: {}".format(total_wrong_oov[POS_KEY] / total_wrong[POS_KEY]))
-	for attr in model.attributes:
-		if attr != POS_KEY:
-			logging.info("{} F1: {}".format(attr, f1_eval.mic_f1(att = attr)))
-	logging.info("Total attribute F1s: {} micro, {} macro, POS included = {}".format(f1_eval.mic_f1(), f1_eval.mac_f1(), False))
-
-	logging.info("Total test tokens: {}, Total test OOV: {}, % OOV: {}".format(test_total[POS_KEY], test_oov_total[POS_KEY], test_oov_total[POS_KEY] / test_total[POS_KEY]))
+	test_loss = evaluate(model, t_instances, "{}/testout.txt".format(options.model_dir), t2is, i2ts, i2w, i2c, training_vocab)
+	
