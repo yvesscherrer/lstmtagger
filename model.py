@@ -22,6 +22,8 @@ __author__ = "Yuval Pinter and Robert Guthrie, 2017"
 Instance = collections.namedtuple("Instance", ["w_sentence", "c_sentence", "tags"])
 
 NONE_TAG = "<NONE>"
+UNK_TAG = "<UNK>"
+PADDING_CHAR = "<*>"
 POS_KEY = "POS"
 
 DEFAULT_WORD_EMBEDDING_SIZE = 64
@@ -443,11 +445,11 @@ if __name__ == "__main__":
 
 				dev_loss += (total_loss / len(instance.w_sentence))
 
-				dev_writer.write(("\n"
-								 + "\n".join(["\t".join(z) for z in zip([i2w[w] for w in instance.w_sentence],
-																			 gold_strings, obs_strings, oov_strings)])
-								 + "\n"))
-
+				# regenerate output words from c_sentence, removing the padding characters
+				out_sentence = [("".join([i2c[c] for c in w])).replace(PADDING_CHAR, "") for w in instance.c_sentence]
+				dev_writer.write("\n"
+								 + "\n".join(["\t".join(z) for z in zip(out_sentence, gold_strings, obs_strings, oov_strings)])
+								 + "\n")
 
 		dev_loss = dev_loss / len(d_instances)
 

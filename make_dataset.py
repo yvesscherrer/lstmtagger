@@ -27,7 +27,7 @@ UNK_CHAR_TAG = "<?>"
 PADDING_CHAR = "<*>"
 POS_KEY = "POS"
 
-def read_file(filename, w2i, t2is, c2i, number_index=0, token_index=1, pos_index=3, morph_index=5):
+def read_file(filename, w2i, t2is, c2i, number_index=0, token_index=1, pos_index=3, morph_index=5, update_vocab=True):
 	"""
 	Read in a dataset and turn it into a list of instances.
 	Modifies the w2i, t2is and c2i dicts, adding new words/attributes/tags/chars
@@ -38,8 +38,8 @@ def read_file(filename, w2i, t2is, c2i, number_index=0, token_index=1, pos_index
 	"""
 
 	# populate mandatory t2i tables
-	if POS_KEY not in t2is:
-		t2is[POS_KEY] = {}
+	if POS_KEY not in t2is and update_vocab:
+		t2is[POS_KEY] = {NONE_TAG: 0}
 
 	# build dataset
 	instances = []
@@ -52,7 +52,7 @@ def read_file(filename, w2i, t2is, c2i, number_index=0, token_index=1, pos_index
 		tags = collections.defaultdict(list)
 
 		# main file reading loop
-		for i, line in enumerate(f):
+		for line in f:
 
 			# discard comments
 			if line.startswith("#"):
@@ -86,25 +86,27 @@ def read_file(filename, w2i, t2is, c2i, number_index=0, token_index=1, pos_index
 
 				# ensure counts and dictionary population
 				vocab_counter[word] += 1
-				if word not in w2i:
-					w2i[word] = len(w2i)
-				pt2i = t2is[POS_KEY]
-				if postag not in pt2i:
-					pt2i[postag] = len(pt2i)
-				for c in word:
-					if c not in c2i:
-						c2i[c] = len(c2i)
-				for key, val in morphotags.items():
-					if key not in t2is:
-						t2is[key] = {NONE_TAG:0}
-					mt2i = t2is[key]
-					if val not in mt2i:
-						mt2i[val] = len(mt2i)
+
+				if update_vocab:
+					if word not in w2i:
+						w2i[word] = len(w2i)
+					pt2i = t2is[POS_KEY]
+					if postag not in pt2i:
+						pt2i[postag] = len(pt2i)
+					for c in word:
+						if c not in c2i:
+							c2i[c] = len(c2i)
+					for key, val in morphotags.items():
+						if key not in t2is:
+							t2is[key] = {NONE_TAG:0}
+						mt2i = t2is[key]
+						if val not in mt2i:
+							mt2i[val] = len(mt2i)
 
 				# add data to sentence buffer
-				w_sentence.append(w2i[word])
-				c_sentence.append([c2i[PADDING_CHAR]] + [c2i[c] for c in word] + [c2i[PADDING_CHAR]])
-				tags[POS_KEY].append(t2is[POS_KEY][postag])
+				w_sentence.append(w2i.get(word, w2i[UNK_TAG]))
+				c_sentence.append([c2i[PADDING_CHAR]] + [c2i.get(c, c2i[UNK_CHAR_TAG]) for c in word] + [c2i[PADDING_CHAR]])
+				tags[POS_KEY].append(t2is[POS_KEY].get(postag, t2is[POS_KEY][NONE_TAG]))
 				for k,v in morphotags.items():
 					mtags = tags[k]
 					# pad backwards to latest seen
@@ -136,9 +138,9 @@ if __name__ == "__main__":
 	c2i = {UNK_CHAR_TAG: 0, PADDING_CHAR: 1} # mapping from character to index, for char-RNN concatenations
 
 	# read data from UD files
-	training_instances, training_vocab = read_file(options.training_data, w2i, t2is, c2i, options.number_index, options.token_index, options.pos_index, options.morph_index)
-	dev_instances, dev_vocab = read_file(options.dev_data, w2i, t2is, c2i, options.number_index, options.token_index, options.pos_index, options.morph_index)
-	test_instances, test_vocab = read_file(options.test_data, w2i, t2is, c2i, options.number_index, options.token_index, options.pos_index, options.morph_index)
+	training_instances, training_vocab = read_file(options.training_data, w2i, t2is, c2i, options.number_index, options.token_index, options.pos_index, options.morph_index, update_vocab=True)
+	dev_instances, dev_vocab = read_file(options.dev_data, w2i, t2is, c2i, options.number_index, options.token_index, options.pos_index, options.morph_index, update_vocab=False)
+	test_instances, test_vocab = read_file(options.test_data, w2i, t2is, c2i, options.number_index, options.token_index, options.pos_index, options.morph_index, update_vocab=False)
 	
 	# trim training set for size evaluation (sentence based)
 	if len(training_instances) > options.training_sentence_size:
@@ -157,7 +159,7 @@ if __name__ == "__main__":
 				training_instances = training_instances[:i+1]
 				break
 	
-	# Add special tokens / tags / chars to dicts
+	# Add special tags to dicts
 	for t2i in t2is.values():
 		t2i[START_TAG] = len(t2i)
 		t2i[END_TAG] = len(t2i)
