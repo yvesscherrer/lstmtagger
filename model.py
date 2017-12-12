@@ -17,7 +17,7 @@ import numpy as np
 
 import utils
 
-__author__ = "Yuval Pinter and Robert Guthrie, 2017"
+__author__ = "Yuval Pinter and Robert Guthrie, 2017 + Yves Scherrer"
 
 Instance = collections.namedtuple("Instance", ["w_sentence", "c_sentence", "tags"])
 
@@ -37,7 +37,7 @@ class LSTMTagger:
 	https://github.com/clab/dynet_tutorial_examples/blob/master/tutorial_bilstm_tagger.py
 	'''
 
-	def __init__(self, tagset_sizes, num_lstm_layers, hidden_dim, word_embeddings, no_we_update, use_char_rnn, charset_size, char_embedding_dim, att_props=None, vocab_size=None, word_embedding_dim=None):
+	def __init__(self, tagset_sizes, num_lstm_layers, hidden_dim, word_embeddings, no_we_update, use_char_rnn, charset_size, char_embedding_dim, att_props=None, vocab_size=None, word_embedding_dim=None, populate_from_file=None, save_settings_to_file=None):
 		'''
 		:param tagset_sizes: dictionary of attribute_name:number_of_possible_tags
 		:param num_lstm_layers: number of desired LSTM layers
@@ -50,10 +50,11 @@ class LSTMTagger:
 		:param att_props: proportion of loss to assign each attribute for back-propagation weighting (optional)
 		:param vocab_size: number of words in model (ignored if pre-trained embeddings are given)
 		:param word_embedding_dim: desired word embedding dimension (ignored if pre-trained embeddings are given)
+		:param populate_from_file: populate weights from saved file
 		'''
 		self.model = dy.ParameterCollection()	# ParameterCollection is the new name for Model
 		self.tagset_sizes = tagset_sizes
-		self.attributes = tagset_sizes.keys()
+		self.attributes = sorted(tagset_sizes.keys())
 		self.we_update = not no_we_update
 		if att_props is not None:
 			self.att_props = defaultdict(float, {att:(1.0-p) for att,p in att_props.items()})
@@ -87,12 +88,32 @@ class LSTMTagger:
 		self.lstm_to_tags_bias = {}
 		self.mlp_out = {}
 		self.mlp_out_bias = {}
-		for att in sorted(tagset_sizes):	# need to be in consistent order for saving and loading
+		for att in self.attributes:	# need to be in consistent order for saving and loading
 			set_size = tagset_sizes[att]
 			self.lstm_to_tags_params[att] = self.model.add_parameters((set_size, hidden_dim), name=bytes(att+"H", 'utf-8'))
 			self.lstm_to_tags_bias[att] = self.model.add_parameters(set_size, name=bytes(att+"Hb", 'utf-8'))
 			self.mlp_out[att] = self.model.add_parameters((set_size, set_size), name=bytes(att+"O", 'utf-8'))
 			self.mlp_out_bias[att] = self.model.add_parameters(set_size, name=bytes(att+"Ob", 'utf-8'))
+		
+		if save_settings_to_file:
+			setting_dict = {
+				"tagset_sizes": tagset_sizes,
+				"num_lstm_layers": num_lstm_layers,
+				"hidden_dim": hidden_dim,
+				"word_embeddings": word_embeddings,
+				"no_we_update": no_we_update,
+				"use_char_rnn": use_char_rnn,
+				"charset_size": charset_size,
+				"char_embedding_dim": char_embedding_dim,
+				"att_props": att_props,
+				"vocab_size": vocab_size,
+				"word_embedding_dim": word_embedding_dim
+			}
+			with open(options.model_dir + "/" + save_settings_to_file, "wb") as outfile:
+				pickle.dump(setting_dict, outfile)
+		
+		if populate_from_file:
+			self.model.populate(populate_from_file)
 
 	def word_rep(self, word, char_ids):
 		'''
@@ -184,9 +205,6 @@ class LSTMTagger:
 		TODO change reading in scripts/test_model.py
 		'''
 		self.model.save(file_name)
-		
-		#with open(file_name + "-atts", 'w') as attdict:
-		#	attdict.write("\t".join(sorted(self.attributes)))
 
 	def old_save(self, file_name):
 		'''
@@ -229,7 +247,15 @@ if __name__ == "__main__":
 	# Argument parsing
 	# ===-----------------------------------------------------------------------===
 	parser = argparse.ArgumentParser()
-	parser.add_argument("--dataset", required=True, dest="dataset", help="file id of .pkl files to use")
+	# Model directory in which all files are stored
+	parser.add_argument("--model-dir", dest="model_dir", required=True, help="Directory where to read data from and where to write write logs and model parameters")
+	parser.add_argument("--no-model", dest="no_model", action="store_true", help="Don't serialize models")
+	# Custom file names (default options are fine for most settings)
+	parser.add_argument("--training-file", dest="training_file", default="train.pkl", help="File name of training data pickle")
+	parser.add_argument("--dev-file", dest="dev_file", default="dev.pkl", help="File name of dev data pickle")
+	#parser.add_argument("--test-file", dest="test_file", default="test.pkl", help="File name of test data pickle")
+	parser.add_argument("--vocab-file", dest="vocab_file", default="vocab.pkl", help="File name of vocabulary pickle")
+	# Model settings
 	parser.add_argument("--word-embeddings", dest="word_embeddings", help="File from which to read in pretrained embeds (if not supplied, will be random)")
 	parser.add_argument("--num-epochs", default=20, dest="num_epochs", type=int, help="Number of full passes through training set (default - 20)")
 	parser.add_argument("--num-lstm-layers", default=2, dest="lstm_layers", type=int, help="Number of LSTM layers (default - 2)")
@@ -239,20 +265,19 @@ if __name__ == "__main__":
 	parser.add_argument("--no-we-update", dest="no_we_update", action="store_true", help="Word Embeddings aren't updated")
 	parser.add_argument("--loss-prop", dest="loss_prop", action="store_true", help="Proportional loss magnitudes")
 	parser.add_argument("--use-char-rnn", dest="use_char_rnn", action="store_true", help="Use character RNN (default - off)")
-	parser.add_argument("--log-dir", default="log", dest="log_dir", help="Directory where to write logs / serialized models")
-	parser.add_argument("--no-model", dest="no_model", action="store_true", help="Don't serialize models")
 	parser.add_argument("--dynet-mem", help="Ignore this external argument")
 	parser.add_argument("--debug", dest="debug", action="store_true", help="Debug mode")
 	options = parser.parse_args()
-
+	
+	# create folder if required
+	if not os.path.exists(options.model_dir):
+		os.mkdir(options.model_dir)
 
 	# ===-----------------------------------------------------------------------===
 	# Set up logging
 	# ===-----------------------------------------------------------------------===
-	if not os.path.exists(options.log_dir):
-		os.mkdir(options.log_dir)
-	logging.basicConfig(filename=options.log_dir + "/log.txt", filemode="w", format="%(message)s", level=logging.INFO)
-	train_dev_cost = csv.writer(open(options.log_dir + "/train_dev.log", 'w'))
+	logging.basicConfig(filename=options.model_dir + "/training.log", filemode="w", format="%(message)s", level=logging.INFO)
+	train_dev_cost = csv.writer(open(options.model_dir + "/train_dev_loss.csv", 'w'))
 	train_dev_cost.writerow(["Train.cost", "Dev.cost"])
 
 
@@ -262,7 +287,7 @@ if __name__ == "__main__":
 
 	logging.info(
 	"""
-	Dataset: {}
+	Model directory: {}
 	Pretrained Embeddings: {}
 	Num Epochs: {}
 	LSTM: {} layers, {} hidden dim
@@ -271,7 +296,7 @@ if __name__ == "__main__":
 	Dropout: {}
 	LSTM loss weights proportional to attribute frequency: {}
 
-	""".format(options.dataset, options.word_embeddings, options.num_epochs, options.lstm_layers, options.hidden_dim, options.use_char_rnn, options.learning_rate, options.dropout, options.loss_prop))
+	""".format(options.model_dir, options.word_embeddings, options.num_epochs, options.lstm_layers, options.hidden_dim, options.use_char_rnn, options.learning_rate, options.dropout, options.loss_prop))
 
 	if options.debug:
 		print("DEBUG MODE")
@@ -280,9 +305,9 @@ if __name__ == "__main__":
 	# Read in dataset
 	# ===-----------------------------------------------------------------------===
 	
-	training_instances = pickle.load(open(options.dataset + ".train.pkl", "rb"))
-	dev_instances = pickle.load(open(options.dataset + ".dev.pkl", "rb"))
-	vocab_dataset = pickle.load(open(options.dataset + ".vocab.pkl", "rb"))
+	training_instances = pickle.load(open(options.model_dir + "/" + options.training_file, "rb"))
+	dev_instances = pickle.load(open(options.model_dir + "/" + options.dev_file, "rb"))
+	vocab_dataset = pickle.load(open(options.model_dir + "/" + options.vocab_file, "rb"))
 	training_vocab = vocab_dataset["training_vocab"]
 	w2i = vocab_dataset["w2i"]
 	t2is = vocab_dataset["t2is"]
@@ -299,14 +324,14 @@ if __name__ == "__main__":
 	else:
 		word_embeddings = None
 
-	tag_set_sizes = { att: len(t2i) for att, t2i in t2is.items() }
+	tagset_sizes = { att: len(t2i) for att, t2i in t2is.items() }
 
 	if options.loss_prop:
 		att_props = get_att_prop(training_instances)
 	else:
 		att_props = None
 
-	model = LSTMTagger(tagset_sizes=tag_set_sizes,
+	model = LSTMTagger(tagset_sizes=tagset_sizes,
 					   num_lstm_layers=options.lstm_layers,
 					   hidden_dim=options.hidden_dim,
 					   word_embeddings=word_embeddings,
@@ -316,25 +341,8 @@ if __name__ == "__main__":
 					   char_embedding_dim=DEFAULT_CHAR_EMBEDDING_SIZE,
 					   att_props=att_props,
 					   vocab_size=len(w2i),
-					   word_embedding_dim=DEFAULT_WORD_EMBEDDING_SIZE)
-	
-	setting_dict = {
-		"tagset_sizes": tag_set_sizes,
-		"num_lstm_layers": options.lstm_layers,
-		"hidden_dim": options.hidden_dim,
-		"word_embeddings": word_embeddings,
-		"no_we_update": options.no_we_update,
-		"use_char_rnn": options.use_char_rnn,
-		"charset_size": len(c2i),
-		"char_embedding_dim": DEFAULT_CHAR_EMBEDDING_SIZE,
-		"att_props": att_props,
-		"vocab_size": len(w2i),
-		"word_embedding_dim": DEFAULT_WORD_EMBEDDING_SIZE,
-		"attributes": sorted(model.attributes)
-	}
-	setting_file_name = "{}/model_settings.pkl".format(options.log_dir)
-	with open(setting_file_name, "wb") as outfile:
-		pickle.dump(setting_dict, outfile)
+					   word_embedding_dim=DEFAULT_WORD_EMBEDDING_SIZE,
+					   save_settings_to_file=None if options.no_model else "model_settings.pkl")
 
 	trainer = dy.MomentumSGDTrainer(model.model, options.learning_rate, 0.9)
 	logging.info("Training Algorithm: {}".format(type(trainer)))
@@ -359,7 +367,7 @@ if __name__ == "__main__":
 			train_instances = training_instances
 
 		# main training loop
-		for idx,instance in enumerate(bar(train_instances)):
+		for instance in bar(train_instances):
 			if len(instance.w_sentence) == 0: continue
 
 			gold_tags = instance.tags
@@ -382,14 +390,14 @@ if __name__ == "__main__":
 			# backward pass and parameter update
 			loss_expr.backward()
 			trainer.update()
+		
+		train_loss = train_loss / len(train_instances)
 
 		# log epoch's train phase
 		logging.info("\n")
 		logging.info("Epoch {} complete".format(epoch + 1))
 		# here used to be a learning rate update, no longer supported in dynet 2.0
 		#print(trainer.status())
-
-		train_loss = train_loss / len(train_instances)
 
 		# evaluate dev data
 		model.disable_dropout()
@@ -405,7 +413,12 @@ if __name__ == "__main__":
 			d_instances = dev_instances[0:int(len(dev_instances)/10)]
 		else:
 			d_instances = dev_instances
-		with open("{}/devout_epoch-{:02d}.txt".format(options.log_dir, epoch + 1), 'w', encoding='utf-8') as dev_writer:
+			
+		if epoch+1 == options.num_epochs:
+				new_devout_file_name = "{}/devout_final.txt".format(options.model_dir)
+			else:
+				new_devout_file_name = "{}/devout_epoch{:02d}.bin".format(options.model_dir, epoch + 1)
+		with open(new_devout_file_name, 'w', encoding='utf-8') as dev_writer:
 			for instance in bar(d_instances):
 				if len(instance.w_sentence) == 0: continue
 				gold_tags = instance.tags
@@ -458,7 +471,7 @@ if __name__ == "__main__":
 		logging.info("POS % OOV accuracy: {}".format((dev_oov_total[POS_KEY] - total_wrong_oov[POS_KEY]) / dev_oov_total[POS_KEY]))
 		if total_wrong[POS_KEY] > 0:
 			logging.info("POS % Wrong that are OOV: {}".format(total_wrong_oov[POS_KEY] / total_wrong[POS_KEY]))
-		for attr in t2is.keys():
+		for attr in model.attributes:
 			if attr != POS_KEY:
 				logging.info("{} F1: {}".format(attr, f1_eval.mic_f1(att = attr)))
 		logging.info("Total attribute F1s: {} micro, {} macro, POS included = {}".format(f1_eval.mic_f1(), f1_eval.mac_f1(), False))
@@ -470,17 +483,19 @@ if __name__ == "__main__":
 		train_dev_cost.writerow([train_loss, dev_loss])
 
 		if epoch > 1 and epoch % 10 != 0: # leave outputs from epochs 1,10,20, etc.
-			old_devout_file_name = "{}/devout_epoch-{:02d}.txt".format(options.log_dir, epoch)
+			old_devout_file_name = "{}/devout_epoch{:02d}.txt".format(options.model_dir, epoch)
 			os.remove(old_devout_file_name)
 
 		# serialize model
 		if not options.no_model:
-			new_model_file_name = "{}/model_epoch-{:02d}.bin".format(options.log_dir, epoch + 1)
+			if epoch+1 == options.num_epochs:
+				new_model_file_name = "{}/model_final.bin".format(options.model_dir)
+			else:
+				new_model_file_name = "{}/model_epoch{:02d}.bin".format(options.model_dir, epoch + 1)
 			logging.info("Saving model to {}".format(new_model_file_name))
 			model.save(new_model_file_name)
 			if epoch > 1 and epoch % 10 != 0: # leave models from epochs 1,10,20, etc.
 				logging.info("Removing files from previous epoch.")
-				old_model_file_name = "{}/model_epoch-{:02d}.bin".format(options.log_dir, epoch)
+				old_model_file_name = "{}/model_epoch{:02d}.bin".format(options.model_dir, epoch)
 				os.remove(old_model_file_name)
-				#os.remove(old_model_file_name + "-atts")
 		# epoch loop ends

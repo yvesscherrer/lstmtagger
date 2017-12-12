@@ -27,7 +27,7 @@ import numpy as np
 
 import utils
 
-__author__ = "Yuval Pinter and Robert Guthrie, 2017"
+__author__ = "Yuval Pinter and Robert Guthrie, 2017 + Yves Scherrer"
 
 Instance = collections.namedtuple("Instance", ["w_sentence", "c_sentence", "tags"])
 
@@ -43,10 +43,11 @@ if __name__ == "__main__":
 	# Argument parsing
 	# ===-----------------------------------------------------------------------===
 	parser = argparse.ArgumentParser()
-	parser.add_argument("--dataset", required=True, dest="dataset", help="fileid of .pkl files to use")
-	parser.add_argument("--load-settings", required=True, dest="load_settings", help=".pkl file to use")
-	parser.add_argument("--load-params", required=True, dest="load_params", help=".bin file to use")
-	parser.add_argument("--log-dir", default="log", dest="log_dir", help="Directory where to write logs / output")
+	parser.add_argument("--model-dir", dest="model_dir", required=True, help="Directory where to read data from and where to write write logs and model parameters")
+	parser.add_argument("--settings-file", dest="settings_file", default="model_settings.pkl", help="File name of model settings pickle")
+	parser.add_argument("--param-file", dest="param_file", default="model_final.bin", help="File name of parameter .bin file")
+	parser.add_argument("--vocab-file", dest="vocab_file", default="vocab.pkl", help="File name of vocabulary pickle")
+	parser.add_argument("--test-file", dest="test_file", default="test.pkl", help="File name of test data pickle")
 	parser.add_argument("--dynet-mem", help="Ignore this external argument")
 	parser.add_argument("--debug", dest="debug", action="store_true", help="Debug mode")
 	options = parser.parse_args()
@@ -55,9 +56,9 @@ if __name__ == "__main__":
 	# ===-----------------------------------------------------------------------===
 	# Set up logging
 	# ===-----------------------------------------------------------------------===
-	if not os.path.exists(options.log_dir):
-		os.mkdir(options.log_dir)
-	logging.basicConfig(filename=options.log_dir + "/testlog.txt", filemode="w", format="%(message)s", level=logging.INFO)
+	if not os.path.exists(options.model_dir):
+		os.mkdir(options.model_dir)
+	logging.basicConfig(filename=options.model_dir + "/test.log", filemode="w", format="%(message)s", level=logging.INFO)
 
 
 	# ===-----------------------------------------------------------------------===
@@ -66,11 +67,11 @@ if __name__ == "__main__":
 
 	logging.info(
 	"""
-	Dataset: {}
+	Model directory: {}
 	Settings file: {}
 	Parameter file: {}
 
-	""".format(options.dataset, options.load_settings, options.load_params))
+	""".format(options.model_dir, options.settings_file, options.param_file))
 
 	if options.debug:
 		print("DEBUG MODE")
@@ -78,7 +79,7 @@ if __name__ == "__main__":
 	# ===-----------------------------------------------------------------------===
 	# Read in dataset
 	# ===-----------------------------------------------------------------------===
-	vocab_dataset = pickle.load(open(options.dataset + ".vocab.pkl", "rb"))
+	vocab_dataset = pickle.load(open(options.model_dir + "/" + options.vocab_file, "rb"))
 	training_vocab = vocab_dataset["training_vocab"]
 	w2i = vocab_dataset["w2i"]
 	t2is = vocab_dataset["t2is"]
@@ -87,9 +88,9 @@ if __name__ == "__main__":
 	i2ts = { att: {i: t for t, i in t2i.items()} for att, t2i in t2is.items() }
 	i2c = { i: c for c, i in c2i.items() }
 	
-	test_instances = pickle.load(open(options.dataset + ".test.pkl", "rb"))
+	test_instances = pickle.load(open(options.model_dir + "/" + options.test_file, "rb"))
 	
-	settings = pickle.load(open(options.load_settings, "rb"))
+	settings = pickle.load(open(options.model_dir + "/" + options.settings_file, "rb"))
 	model = LSTMTagger(tagset_sizes=settings["tagset_sizes"],
 					   num_lstm_layers=settings["num_lstm_layers"],
 					   hidden_dim=settings["hidden_dim"],
@@ -100,8 +101,8 @@ if __name__ == "__main__":
 					   char_embedding_dim=settings["char_embedding_dim"],
 					   att_props=settings["att_props"],
 					   vocab_size=settings["vocab_size"],
-					   word_embedding_dim=settings["word_embedding_dim"])
-	model.model.populate(options.load_params)
+					   word_embedding_dim=settings["word_embedding_dim"],
+					   populate_from_file=options.model_dir + "/" + options.param_file)
 
 	# evaluate test data (once)
 	logging.info("\n")
@@ -118,7 +119,7 @@ if __name__ == "__main__":
 		t_instances = test_instances[0:int(len(test_instances)/10)]
 	else:
 		t_instances = test_instances
-	with open("{}/testout.txt".format(options.log_dir), 'w', encoding='utf-8') as test_writer:
+	with open("{}/testout.txt".format(options.model_dir), 'w', encoding='utf-8') as test_writer:
 		for instance in bar(t_instances):
 			if len(instance.w_sentence) == 0: continue
 			gold_tags = instance.tags
@@ -163,7 +164,7 @@ if __name__ == "__main__":
 	logging.info("POS % Test OOV accuracy: {}".format((test_oov_total[POS_KEY] - total_wrong_oov[POS_KEY]) / test_oov_total[POS_KEY]))
 	if total_wrong[POS_KEY] > 0:
 		logging.info("POS % Test Wrong that are OOV: {}".format(total_wrong_oov[POS_KEY] / total_wrong[POS_KEY]))
-	for attr in t2is.keys():
+	for attr in model.attributes:
 		if attr != POS_KEY:
 			logging.info("{} F1: {}".format(attr, f1_eval.mic_f1(att = attr)))
 	logging.info("Total attribute F1s: {} micro, {} macro, POS included = {}".format(f1_eval.mic_f1(), f1_eval.mac_f1(), False))
