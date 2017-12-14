@@ -11,8 +11,6 @@ import os
 
 __author__ = "Yuval Pinter and Robert Guthrie, 2017 + Yves Scherrer"
 
-#Instance = collections.namedtuple("Instance", ["w_sentence", "c_sentence", "tags"])
-
 
 if __name__ == "__main__":
 
@@ -86,5 +84,4 @@ if __name__ == "__main__":
 		t_instances = test_instances[0:int(len(test_instances)/10)]
 	else:
 		t_instances = test_instances
-	test_loss = evaluate(model, t_instances, "{}/testout.txt".format(options.model_dir), t2is, i2ts, i2w, i2c, training_vocab)
-	
+	evaluate(model, t_instances, "{}/testout.txt".format(options.model_dir), t2is, i2ts, i2w, i2c, training_vocab)

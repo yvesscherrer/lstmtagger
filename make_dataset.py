@@ -77,12 +77,15 @@ def read_file(filename, w2i, t2is, c2i, vocab_counter, number_index=0, w_token_i
 
 				# parse token information in line
 				data = line.split("\t")
-				if ('-' in data[w_token_index]) or ('-' in data[c_token_index]) : # Some UD languages have contractions on a separate line, we don't want to include them also
-					continue
+				if '-' in data[number_index] or '.' in data[number_index]: # Some UD languages have contractions on a separate line, we don't want to include them also
+				 	continue
 				idx = int(data[number_index])
 				w_word = data[w_token_index]
 				c_word = data[c_token_index]
-				postag = data[pos_index] if pos_index != morph_index else data[pos_index].split("|")[0]
+				if pos_index < 0:
+					postag = NONE_TAG
+				else:
+					postag = data[pos_index] if pos_index != morph_index else data[pos_index].split("|")[0]
 				morphotags = {} if morph_index < 0 else utils.split_tagstring(data[morph_index], uni_key=False, has_pos=(pos_index == morph_index))
 
 				if update_vocab:
@@ -150,6 +153,7 @@ if __name__ == "__main__":
 	
 	# load existing vocabulary file
 	if options.vocab_file in os.listdir(options.model_dir):
+		print("Loading existing vocabulary file from {}/{}".format(options.model_dir, options.vocab_file))
 		vocab_dataset = pickle.load(open(options.model_dir + "/" + options.vocab_file, "rb"))
 		training_vocab = vocab_dataset["training_vocab"]
 		w2i = vocab_dataset["w2i"]

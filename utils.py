@@ -62,7 +62,7 @@ def morphotag_strings(i2ts, tag_mapping, pos_separate_col=True):
 			else:
 				val = i2ts[att][seq[j]]
 			if pos_separate_col and att == POS_KEY:
-				pos_str = val
+				pos_str = "" if val == NONE_TAG else val
 			elif val != NONE_TAG:
 				place_strs.append(att + "=" + val)
 		morpho_str = "|".join(sorted(place_strs))

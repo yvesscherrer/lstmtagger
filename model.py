@@ -20,8 +20,6 @@ import utils
 
 __author__ = "Yuval Pinter and Robert Guthrie, 2017 + Yves Scherrer"
 
-#Instance = collections.namedtuple("Instance", ["w_sentence", "c_sentence", "tags"])
-
 NONE_TAG = "<NONE>"
 PADDING_CHAR = "<*>"
 POS_KEY = "POS"
@@ -177,7 +175,7 @@ class LSTMTagger:
 	def tag_sentence(self, sentence, word_chars):
 		'''
 		For use in testing phase.
-		Tag sentence and return tags for each attribute, without caluclating loss.
+		Tag sentence and return tags for each attribute, without calculating loss.
 		'''
 		if not self.use_char_rnn:
 			word_chars = None
@@ -251,6 +249,7 @@ def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab
 	total_wrong = Counter()
 	total_wrong_oov = Counter()
 	f1_eval = Evaluator(m = 'att')
+	display_eval = False
 	
 	with open(outfilename, 'w', encoding='utf-8') as writer:
 		for instance in bar(instances):
@@ -268,6 +267,9 @@ def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab
 			for g, o in zip(gold_strings, obs_strings):
 				f1_eval.add_instance(utils.split_tagstring(g, has_pos=True), utils.split_tagstring(o, has_pos=True))
 			for att, tags in gold_tags.items():
+				# display the evaluation figures if we have ever seen a POS tag != NONE in the gold
+				if (not display_eval) and (att == POS_KEY) and any([t != t2is[POS_KEY][NONE_TAG] for t in tags]):
+					display_eval = True
 				out_tags = out_tags_set[att]
 				correct_sent = True
 
@@ -300,14 +302,17 @@ def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab
 
 	# log results
 	logging.info("Number of instances: {}".format(len(instances)))
-	logging.info("POS Accuracy: {}".format(correct[POS_KEY] / total[POS_KEY]))
-	logging.info("POS % OOV accuracy: {}".format((oov_total[POS_KEY] - total_wrong_oov[POS_KEY]) / oov_total[POS_KEY]))
-	if total_wrong[POS_KEY] > 0:
-		logging.info("POS % Wrong that are OOV: {}".format(total_wrong_oov[POS_KEY] / total_wrong[POS_KEY]))
-	for attr in model.attributes:
-		if attr != POS_KEY:
-			logging.info("{} F1: {}".format(attr, f1_eval.mic_f1(att = attr)))
-	logging.info("Total attribute F1s: {} micro, {} macro, POS included = {}".format(f1_eval.mic_f1(), f1_eval.mac_f1(), False))
+	if display_eval:
+		logging.info("POS Accuracy: {}".format(correct[POS_KEY] / total[POS_KEY]))
+		logging.info("POS % OOV accuracy: {}".format((oov_total[POS_KEY] - total_wrong_oov[POS_KEY]) / oov_total[POS_KEY]))
+		if total_wrong[POS_KEY] > 0:
+			logging.info("POS % Wrong that are OOV: {}".format(total_wrong_oov[POS_KEY] / total_wrong[POS_KEY]))
+		for attr in model.attributes:
+			if attr != POS_KEY:
+				logging.info("{} F1: {}".format(attr, f1_eval.mic_f1(att = attr)))
+		logging.info("Total attribute F1s: {} micro, {} macro, POS included = {}".format(f1_eval.mic_f1(), f1_eval.mac_f1(), False))
+	else:
+		logging.info("Evaluation measures not available (no gold tags in file)")
 
 	logging.info("Total tokens: {}, Total OOV: {}, % OOV: {}".format(total[POS_KEY], oov_total[POS_KEY], oov_total[POS_KEY] / total[POS_KEY]))
 	return loss
@@ -378,7 +383,6 @@ if __name__ == "__main__":
 	# ===-----------------------------------------------------------------------===
 	
 	training_instances = pickle.load(open(options.model_dir + "/" + options.training_file, "rb"))
-	dev_instances = pickle.load(open(options.model_dir + "/" + options.dev_file, "rb"))
 	vocab_dataset = pickle.load(open(options.model_dir + "/" + options.vocab_file, "rb"))
 	training_vocab = vocab_dataset["training_vocab"]
 	w2i = vocab_dataset["w2i"]
@@ -387,6 +391,12 @@ if __name__ == "__main__":
 	i2w = { i: w for w, i in w2i.items() } # Inverse mapping
 	i2ts = { att: {i: t for t, i in t2i.items()} for att, t2i in t2is.items() }
 	i2c = { i: c for c, i in c2i.items() }
+
+	if os.path.exists(options.model_dir + "/" + options.dev_file):
+		dev_instances = pickle.load(open(options.model_dir + "/" + options.dev_file, "rb"))
+	else:
+		logging.info("Development data not found at {}/{} !".format(options.model_dir, options.dev_file))
+		dev_instances = None
 
 	# ===-----------------------------------------------------------------------===
 	# Build model and trainer
@@ -472,24 +482,28 @@ if __name__ == "__main__":
 		#print(trainer.status())
 
 		# evaluate dev data
-		if options.debug:
-			d_instances = dev_instances[0:int(len(dev_instances)/10)]
-		else:
-			d_instances = dev_instances
+		if dev_instances:
+			if options.debug:
+				d_instances = dev_instances[0:int(len(dev_instances)/10)]
+			else:
+				d_instances = dev_instances
+				
+			if epoch+1 == options.num_epochs:
+				new_devout_file_name = "{}/devout_final.txt".format(options.model_dir)
+			else:
+				new_devout_file_name = "{}/devout_epoch{:02d}.txt".format(options.model_dir, epoch + 1)
 			
-		if epoch+1 == options.num_epochs:
-			new_devout_file_name = "{}/devout_final.txt".format(options.model_dir)
-		else:
-			new_devout_file_name = "{}/devout_epoch{:02d}.txt".format(options.model_dir, epoch + 1)
-		
-		logging.info("Evaluate dev data")
-		dev_loss = evaluate(model, d_instances, new_devout_file_name, t2is, i2ts, i2w, i2c, training_vocab)
-		logging.info("Dev Loss: {}".format(dev_loss))
-		train_dev_cost.writerow([train_loss, dev_loss])
+			logging.info("Evaluate dev data")
+			dev_loss = evaluate(model, d_instances, new_devout_file_name, t2is, i2ts, i2w, i2c, training_vocab)
+			logging.info("Dev Loss: {}".format(dev_loss))
 
-		if epoch > 1 and epoch % 10 != 0: # leave outputs from epochs 1,10,20, etc.
-			old_devout_file_name = "{}/devout_epoch{:02d}.txt".format(options.model_dir, epoch)
-			os.remove(old_devout_file_name)
+			if epoch > 1 and epoch % 10 != 0: # leave outputs from epochs 1,10,20, etc.
+				old_devout_file_name = "{}/devout_epoch{:02d}.txt".format(options.model_dir, epoch)
+				os.remove(old_devout_file_name)
+			
+			train_dev_cost.writerow([train_loss, dev_loss])
+		else:
+			train_dev_cost.writerow([train_loss, "NA"])
 
 		# serialize model
 		if not options.no_model:
