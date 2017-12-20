@@ -13,7 +13,7 @@ def read_pretrained_embeddings(filename, w2i):
 				word = split[0]
 				vec = split[1:]
 				word_to_embed[word] = vec
-	embedding_dim = len(word_to_embed[word_to_embed.keys()[0]])
+	embedding_dim = len(word_to_embed[list(word_to_embed.keys())[0]])
 	out = np.random.uniform(-0.8, 0.8, (len(w2i), embedding_dim))
 	for word, embed in word_to_embed.items():
 		embed_arr = np.array(embed)
