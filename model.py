@@ -115,11 +115,28 @@ def read_file(filename, w2i, t2is, c2i, vocab_counter, number_index=0, w_token_i
 				c_sentence.append([c2i[PADDING_CHAR]] + [c2i.get(c, c2i[UNK_CHAR_TAG]) for c in c_word] + [c2i[PADDING_CHAR]])
 				tags[POS_KEY].append(t2is[POS_KEY].get(postag, t2is[POS_KEY][NONE_TAG]))
 				for k,v in morphotags.items():
+					if k not in t2is:
+						# if there is an unknown morphological feature, we do not add it
+						logging.info("Unknown feature key {} with value {} in file {} - skipping it".format(k, v, filename))
+						continue
+					
 					mtags = tags[k]
 					# pad backwards to latest seen
 					missing_tags = idx - len(mtags) - 1
 					mtags.extend([0] * missing_tags) # 0 guaranteed above to represent NONE_TAG
-					mtags.append(t2is[k][v])
+					mtags.append(t2is[k].get(v, NONE_TAG))
+						
+		
+		# last sentence
+		if len(w_sentence) > 0:
+			# pad tag lists to sentence end
+			slen = len(w_sentence)
+			for seq in tags.values():
+				if len(seq) < slen:
+					seq.extend([0] * (slen - len(seq))) # 0 guaranteed below to represent NONE_TAG
+			# add sentence to dataset
+			instances.append(Instance(w_sentence, c_sentence, tags))
+		
 	return instances
 
 
