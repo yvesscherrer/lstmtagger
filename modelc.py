@@ -12,26 +12,21 @@ import utils
 
 __author__ = "Yuval Pinter and Robert Guthrie, 2017 + Yves Scherrer"
 
-Instance = collections.namedtuple("Instance", ["w_sentence", "c_sentence", "tags"])
+Instance = collections.namedtuple("Instance", ["sentence", "tags"])
 
 UNK_TAG = "<UNK>"
 NONE_TAG = "<NONE>"
 START_TAG = "<START>"
 END_TAG = "<STOP>"
-UNK_CHAR_TAG = "<?>"
 PADDING_CHAR = "<*>"
 POS_KEY = "POS"
 
-DEFAULT_WORD_EMBEDDING_SIZE = 64
-DEFAULT_CHAR_EMBEDDING_SIZE = 20
-
-def read_file(filename, w2i, t2is, c2i, vocab_counter, number_index=0, w_token_index=1, c_token_index=1, pos_index=3, morph_index=5, update_vocab=True):
+def read_file(filename, t2is, c2i, vocab_counter, number_index=0, token_index=1, pos_index=3, morph_index=5, update_vocab=True):
 	"""
 	Read in a dataset and turn it into a list of instances.
-	Modifies the w2i, t2is and c2i dicts, adding new words/attributes/tags/chars
+	Modifies the t2is and c2i dicts, adding new attributes/tags/chars
 	as it sees them.
-	w_token_index: field in which the token representation used for the word embeddings is stored
-	c_token_index: field in which the token representation used for the character embeddings is stored
+	token_index: field in which the token representation used for the character embeddings is stored
 	pos_index: field in which the main POS is stored
 	morph_index: field in which the morphological tags are stored (-1 if no morphology)
 	"""
@@ -45,8 +40,7 @@ def read_file(filename, w2i, t2is, c2i, vocab_counter, number_index=0, w_token_i
 	with open(filename, "r", encoding="utf-8") as f:
 
 		# running sentence buffers (lines are tokens)
-		w_sentence = []
-		c_sentence = []
+		sentence = []
 		tags = collections.defaultdict(list)
 		idx = 0
 
@@ -61,20 +55,18 @@ def read_file(filename, w2i, t2is, c2i, vocab_counter, number_index=0, w_token_i
 			elif line.isspace():
 
 				# pad tag lists to sentence end
-				slen = len(w_sentence)
+				slen = len(sentence)
 				for seq in tags.values():
 					if len(seq) < slen:
 						seq.extend([0] * (slen - len(seq))) # 0 guaranteed below to represent NONE_TAG
 
 				# add sentence to dataset
-				instances.append(Instance(w_sentence, c_sentence, tags))
-				w_sentence = []
-				c_sentence = []
+				instances.append(Instance(sentence, tags))
+				sentence = []
 				tags = collections.defaultdict(list)
 				idx = 0
 
 			else:
-
 				# parse token information in line
 				data = line.split("\t")
 				if number_index < 0:
@@ -83,8 +75,7 @@ def read_file(filename, w2i, t2is, c2i, vocab_counter, number_index=0, w_token_i
 					if '-' in data[number_index] or '.' in data[number_index]: # Some UD languages have contractions on a separate line, we don't want to include them also
 						continue
 					idx = int(data[number_index])
-				w_word = data[w_token_index]
-				c_word = data[c_token_index]
+				word = data[token_index]
 				if pos_index < 0:
 					postag = NONE_TAG
 				else:
@@ -93,14 +84,12 @@ def read_file(filename, w2i, t2is, c2i, vocab_counter, number_index=0, w_token_i
 
 				if update_vocab:
 					# ensure counts and dictionary population
-					vocab_counter[w_word] += 1
-				
-					if w_word not in w2i:
-						w2i[w_word] = len(w2i)
+					vocab_counter[word] += 1
+					
 					pt2i = t2is[POS_KEY]
 					if postag not in pt2i:
 						pt2i[postag] = len(pt2i)
-					for c in c_word:
+					for c in word:
 						if c not in c2i:
 							c2i[c] = len(c2i)
 					for key, val in morphotags.items():
@@ -111,8 +100,7 @@ def read_file(filename, w2i, t2is, c2i, vocab_counter, number_index=0, w_token_i
 							mt2i[val] = len(mt2i)
 
 				# add data to sentence buffer
-				w_sentence.append(w2i.get(w_word, w2i[UNK_TAG]))
-				c_sentence.append([c2i[PADDING_CHAR]] + [c2i.get(c, c2i[UNK_CHAR_TAG]) for c in c_word] + [c2i[PADDING_CHAR]])
+				sentence.append([c2i[PADDING_CHAR]] + [c2i.get(c, c2i[UNK_TAG]) for c in word] + [c2i[PADDING_CHAR]])
 				tags[POS_KEY].append(t2is[POS_KEY].get(postag, t2is[POS_KEY][NONE_TAG]))
 				for k,v in morphotags.items():
 					if k not in t2is:
@@ -128,14 +116,14 @@ def read_file(filename, w2i, t2is, c2i, vocab_counter, number_index=0, w_token_i
 						
 		
 		# last sentence
-		if len(w_sentence) > 0:
+		if len(sentence) > 0:
 			# pad tag lists to sentence end
-			slen = len(w_sentence)
+			slen = len(sentence)
 			for seq in tags.values():
 				if len(seq) < slen:
 					seq.extend([0] * (slen - len(seq))) # 0 guaranteed below to represent NONE_TAG
 			# add sentence to dataset
-			instances.append(Instance(w_sentence, c_sentence, tags))
+			instances.append(Instance(sentence, tags))
 		
 	return instances
 
@@ -148,51 +136,33 @@ class LSTMTagger:
 	https://github.com/clab/dynet_tutorial_examples/blob/master/tutorial_bilstm_tagger.py
 	'''
 
-	def __init__(self, tagset_sizes, num_lstm_layers, hidden_dim, word_embeddings, no_we_update, use_char_rnn, charset_size, char_embedding_dim, att_props=None, vocab_size=None, word_embedding_dim=None, populate_from_file=None, save_settings_to_file=None):
+	def __init__(self, tagset_sizes, charset_size, char_num_lstm_layers, char_embedding_dim, char_hidden_dim, word_num_lstm_layers, word_hidden_dim, att_props=None, populate_from_file=None, save_settings_to_file=None):
 		'''
 		:param tagset_sizes: dictionary of attribute_name:number_of_possible_tags
-		:param num_lstm_layers: number of desired LSTM layers
-		:param hidden_dim: size of hidden dimension (same for all LSTM layers, including character-level)
-		:param word_embeddings: pre-trained list of embeddings, assumes order by word ID (optional)
-		:param no_we_update: if toggled, don't update embeddings
-		:param use_char_rnn: use "char->tag" option, i.e. concatenate character-level LSTM outputs to word representations (and train underlying LSTM). Only 1-layer is supported.
 		:param charset_size: number of characters expected in dataset (needed for character embedding initialization)
+		:param char_num_lstm_layers: number of desired layers for the LSTM representing characters in words
 		:param char_embedding_dim: desired character embedding dimension
+		:param char_hidden_dim: size of hidden dimensions of the LSTM representing characters in words (same for all LSTM layers)
+		:param word_num_lstm_layers: number of desired layers for the LSTM representing words in sentences
+		:param word_hidden_dim: size of hidden dimensions of the LSTM representing words in sentences (same for all LSTM layers)
 		:param att_props: proportion of loss to assign each attribute for back-propagation weighting (optional)
-		:param vocab_size: number of words in model (ignored if pre-trained embeddings are given)
-		:param word_embedding_dim: desired word embedding dimension (ignored if pre-trained embeddings are given)
 		:param populate_from_file: populate weights from saved file
 		'''
 		self.model = dy.ParameterCollection()	# ParameterCollection is the new name for Model
 		self.tagset_sizes = tagset_sizes
 		self.attributes = sorted(tagset_sizes.keys())
-		self.we_update = not no_we_update
 		if att_props is not None:
 			self.att_props = defaultdict(float, {att:(1.0-p) for att,p in att_props.items()})
 		else:
 			self.att_props = None
-
-		if word_embeddings is not None: # Use pretrained embeddings
-			vocab_size = word_embeddings.shape[0]
-			word_embedding_dim = word_embeddings.shape[1]
-			logging.info("Use pretrained embeddings: setting vocabulary size to {} and dimensions to {}".format(vocab_size, word_embedding_dim))
-		self.words_lookup = self.model.add_lookup_parameters((vocab_size, word_embedding_dim), name=b"we")
-
-		if word_embeddings is not None:
-			self.words_lookup.init_from_array(word_embeddings)
-
+		
 		# Char LSTM Parameters
-		self.use_char_rnn = use_char_rnn
-		if use_char_rnn:
-			self.char_lookup = self.model.add_lookup_parameters((charset_size, char_embedding_dim), name=b"ce")
-			self.char_bi_lstm = dy.BiRNNBuilder(1, char_embedding_dim, hidden_dim, self.model, dy.LSTMBuilder)
+		self.char_lookup = self.model.add_lookup_parameters((charset_size, char_embedding_dim), name=b"ce")
+		# this should not be bidirectional, and have different hidden_dims (1024 for first layer, 256 for second layer)
+		self.char_bi_lstm = dy.BiRNNBuilder(char_num_lstm_layers, char_embedding_dim, char_hidden_dim, self.model, dy.LSTMBuilder)
 
 		# Word LSTM parameters
-		if use_char_rnn:
-			input_dim = word_embedding_dim + hidden_dim
-		else:
-			input_dim = word_embedding_dim
-		self.word_bi_lstm = dy.BiRNNBuilder(num_lstm_layers, input_dim, hidden_dim, self.model, dy.LSTMBuilder)
+		self.word_bi_lstm = dy.BiRNNBuilder(word_num_lstm_layers, char_hidden_dim, word_hidden_dim, self.model, dy.LSTMBuilder)
 
 		# Matrix that maps from Bi-LSTM output to num tags
 		self.lstm_to_tags_params = {}
@@ -201,7 +171,7 @@ class LSTMTagger:
 		self.mlp_out_bias = {}
 		for att in self.attributes:	# need to be in consistent order for saving and loading
 			set_size = tagset_sizes[att]
-			self.lstm_to_tags_params[att] = self.model.add_parameters((set_size, hidden_dim), name=bytes(att+"H", 'utf-8'))
+			self.lstm_to_tags_params[att] = self.model.add_parameters((set_size, word_hidden_dim), name=bytes(att+"H", 'utf-8'))
 			self.lstm_to_tags_bias[att] = self.model.add_parameters(set_size, name=bytes(att+"Hb", 'utf-8'))
 			self.mlp_out[att] = self.model.add_parameters((set_size, set_size), name=bytes(att+"O", 'utf-8'))
 			self.mlp_out_bias[att] = self.model.add_parameters(set_size, name=bytes(att+"Ob", 'utf-8'))
@@ -209,16 +179,13 @@ class LSTMTagger:
 		if save_settings_to_file:
 			setting_dict = {
 				"tagset_sizes": tagset_sizes,
-				"num_lstm_layers": num_lstm_layers,
-				"hidden_dim": hidden_dim,
-				"word_embeddings": word_embeddings,
-				"no_we_update": no_we_update,
-				"use_char_rnn": use_char_rnn,
 				"charset_size": charset_size,
+				"char_num_lstm_layers": char_num_lstm_layers,
 				"char_embedding_dim": char_embedding_dim,
-				"att_props": att_props,
-				"vocab_size": vocab_size,
-				"word_embedding_dim": word_embedding_dim
+				"char_hidden_dim": char_hidden_dim,
+				"word_num_lstm_layers": word_num_lstm_layers,
+				"word_hidden_dim": word_hidden_dim,
+				"att_props": att_props
 			}
 			with open(save_settings_to_file, "wb") as outfile:
 				pickle.dump(setting_dict, outfile)
@@ -228,38 +195,25 @@ class LSTMTagger:
 	
 		s = '''LSTM tagging model created with following parameters:
 
-LSTM: {} layers, {} hidden dimensions
-Word embeddings: {} dimensions
-Concatenating character LSTM: {}
-Char embeddings: {} dimensions
-Vocabulary size: {}
 Character set size: {}
 Tagset sizes: {}
-'''.format(num_lstm_layers, hidden_dim, word_embedding_dim, use_char_rnn, char_embedding_dim, vocab_size, charset_size, ", ".join(["{}:{}".format(x, tagset_sizes[x]) for x in sorted(tagset_sizes)]))
+Character LSTM: {} input embedding dimensions, {} layers, {} hidden dimensions per layer
+Word LSTM: {} layers, {} hidden dimensions per layer
+'''.format(charset_size, ", ".join(["{}:{}".format(x, tagset_sizes[x]) for x in sorted(tagset_sizes)]), char_embedding_dim, char_num_lstm_layers, char_hidden_dim, word_num_lstm_layers, word_hidden_dim)
 		logging.info(s)
 		
 
-	def word_rep(self, word, char_ids):
-		'''
-		:param word: index of word in lookup table
-		'''
-		wemb = dy.lookup(self.words_lookup, word, update=self.we_update)
-		if char_ids is None:
-			return wemb
-
-		# add character representation
+	def word_rep(self, char_ids):
+		# character representation
 		char_embs = [self.char_lookup[cid] for cid in char_ids]
 		char_exprs = self.char_bi_lstm.transduce(char_embs)
-		return dy.concatenate([ wemb, char_exprs[-1] ])
+		# Dynet documentation: transduce() returns the list of output Expressions obtained by adding the given inputs to the current state, one by one, to both the forward and backward RNNs, and concatenating
+		return char_exprs[-1]
 
-	def build_tagging_graph(self, sentence, word_chars):
+	def build_tagging_graph(self, sentence):
 		dy.renew_cg()
 		
-		if not self.use_char_rnn:
-			embeddings = [self.word_rep(w, None) for w in sentence]
-		else:
-			embeddings = [self.word_rep(w, chars) for w, chars in zip(sentence, word_chars)]
-
+		embeddings = [self.word_rep(chars) for chars in sentence]
 		lstm_out = self.word_bi_lstm.transduce(embeddings)
 
 		H = {}
@@ -279,12 +233,13 @@ Tagset sizes: {}
 
 		return scores
 
-	def loss(self, sentence, word_chars, tags_set):
+	# sentence is the original word_chars
+	def loss(self, sentence, tags_set):
 		'''
 		For use in training phase.
 		Tag sentence (all attributes) and compute loss based on probability of expected tags.
 		'''
-		observations_set = self.build_tagging_graph(sentence, word_chars)
+		observations_set = self.build_tagging_graph(sentence)
 		errors = {}
 		for att, tags in tags_set.items():
 			err = []
@@ -297,15 +252,14 @@ Tagset sizes: {}
 				prop_vec = dy.inputVector([self.att_props[att]] * err.dim()[0])
 				err = dy.cmult(err, prop_vec)
 		return errors
-
-	def tag_sentence(self, sentence, word_chars):
+	
+	# sentence is the original word_chars
+	def tag_sentence(self, sentence):
 		'''
 		For use in testing phase.
 		Tag sentence and return tags for each attribute, without calculating loss.
 		'''
-		if not self.use_char_rnn:
-			word_chars = None
-		observations_set = self.build_tagging_graph(sentence, word_chars)
+		observations_set = self.build_tagging_graph(sentence)
 		tag_seqs = {}
 		for att, observations in observations_set.items():
 			observations = [ dy.softmax(obs) for obs in observations ]
@@ -318,9 +272,11 @@ Tagset sizes: {}
 		return tag_seqs
 
 	def set_dropout(self, p):
+		self.char_bi_lstm.set_dropout(p)	# added
 		self.word_bi_lstm.set_dropout(p)
 
 	def disable_dropout(self):
+		self.char_bi_lstm.disable_dropout()	# added
 		self.word_bi_lstm.disable_dropout()
 		
 	def save(self, file_name):
@@ -358,14 +314,14 @@ def get_att_prop(instances):
 	total_tokens = 0
 	att_counts = Counter()
 	for instance in instances:
-		total_tokens += len(instance.w_sentence)
+		total_tokens += len(instance.sentence)
 		for att, tags in instance.tags.items():
 			t2i = t2is[att]
 			att_counts[att] += len([t for t in tags if t != t2i.get(NONE_TAG, -1)])
 	return {att:(1.0 - (att_counts[att] / total_tokens)) for att in att_counts}
 
 
-def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab):
+def evaluate(model, instances, outfilename, t2is, i2ts, i2c, training_vocab):
 	model.disable_dropout()
 	loss = 0.0
 	correct = Counter()
@@ -380,14 +336,14 @@ def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab
 		writer = open(outfilename, 'w', encoding='utf-8')
 
 	for instance in bar(instances):
-		if len(instance.w_sentence) == 0: continue
+		if len(instance.sentence) == 0: continue
 		gold_tags = instance.tags
 		for att in model.attributes:
 			if att not in instance.tags:
-				gold_tags[att] = [t2is[att][NONE_TAG]] * len(instance.w_sentence)
-		losses = model.loss(instance.w_sentence, instance.c_sentence, gold_tags)
+				gold_tags[att] = [t2is[att][NONE_TAG]] * len(instance.sentence)
+		losses = model.loss(instance.sentence, gold_tags)
 		total_loss = sum([l.scalar_value() for l in losses.values()])
-		out_tags_set = model.tag_sentence(instance.w_sentence, instance.c_sentence)
+		out_tags_set = model.tag_sentence(instance.sentence)
 
 		gold_strings = utils.morphotag_strings(i2ts, gold_tags)
 		obs_strings = utils.morphotag_strings(i2ts, out_tags_set)
@@ -401,17 +357,18 @@ def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab
 			correct_sent = True
 
 			oov_strings = []
-			for word, gold, out in zip(instance.w_sentence, tags, out_tags):
+			for word, gold, out in zip(instance.sentence, tags, out_tags):
+				wordstr = ("".join([i2c[c] for c in word])).replace(PADDING_CHAR, "")
 				if gold == out:
 					correct[att] += 1
 				else:
 					# Got the wrong tag
 					total_wrong[att] += 1
 					correct_sent = False
-					if i2w[word] not in training_vocab:
+					if wordstr not in training_vocab:
 						total_wrong_oov[att] += 1
-
-				if i2w[word] not in training_vocab:
+				
+				if wordstr not in training_vocab:
 					oov_total[att] += 1
 					oov_strings.append("OOV")
 				else:
@@ -419,11 +376,11 @@ def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab
 
 			total[att] += len(tags)
 
-		loss += (total_loss / len(instance.w_sentence))
+		loss += (total_loss / len(instance.sentence))
 		
 		if writer:
 			# regenerate output words from c_sentence, removing the padding characters
-			out_sentence = [("".join([i2c[c] for c in w])).replace(PADDING_CHAR, "") for w in instance.c_sentence]
+			out_sentence = [("".join([i2c[c] for c in w])).replace(PADDING_CHAR, "") for w in instance.sentence]
 			writer.write("\n" + "\n".join(["\t".join(z) for z in zip(out_sentence, gold_strings, obs_strings, oov_strings)]) + "\n")
 	
 	if writer: writer.close()
@@ -448,7 +405,6 @@ def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab
 	return loss
 
 
-
 if __name__ == "__main__":
 
 	# ===-----------------------------------------------------------------------===
@@ -470,14 +426,12 @@ if __name__ == "__main__":
 	parser.add_argument("--settings-save", dest="settings_save", default=None, help="Pickle file to which the model architecture is saved")
 	parser.add_argument("--params", dest="params", default=None, help="Binary file (.bin) from which the model weights are loaded")
 	parser.add_argument("--params-save", dest="params_save", default=None, help="Binary files (.bin) in which the model weights are saved (epoch count is added in front of file extension)")
-	parser.add_argument("--word-embeddings", dest="word_embeddings", default=None, help="File from which to read in pretrained embeddings (if not supplied, will be random)")
 	parser.add_argument("--log-dir", dest="log_dir", default="log", help="directory in which the log files are saved")
 	
 	# File format (default options are fine for UD-formatted files)
 	# Call this script several times if not all datasets are formatted in the same way
 	parser.add_argument("--number-index", dest="number_index", type=int, help="Field in which the word numbers are stored (default: 0)", default=0)
-	parser.add_argument("--w-token-index", dest="w_token_index", type=int, help="Field in which the tokens used for the word embeddings are stored (default: 1)", default=1)
-	parser.add_argument("--c-token-index", dest="c_token_index", type=int, help="Field in which the tokens used for the character embeddings are stored (default: 1)", default=1)
+	parser.add_argument("--token-index", dest="token_index", type=int, help="Field in which the tokens used for the character embeddings are stored (default: 1)", default=1)
 	parser.add_argument("--pos-index", dest="pos_index", type=int, help="Field in which the main POS is stored (default, UD tags: 3) (original non-UD tag: 4)", default=3)
 	parser.add_argument("--morph-index", dest="morph_index", type=int, help="Field in which the morphology tags are stored (default: 5); use negative value if morphosyntactic tags should not be considered", default=5)
 	
@@ -487,15 +441,14 @@ if __name__ == "__main__":
 	
 	# Model settings
 	parser.add_argument("--num-epochs", default=20, dest="num_epochs", type=int, help="Number of full passes through training set (default: 20; disable training by setting --num-epochs to negative value)")
-	parser.add_argument("--num-lstm-layers", default=2, dest="lstm_layers", type=int, help="Number of LSTM layers (default: 2)")
-	parser.add_argument("--hidden-dim", default=128, dest="hidden_dim", type=int, help="Size of LSTM hidden layers (default: 128)")
-	parser.add_argument("--word-emb-dim", default=DEFAULT_WORD_EMBEDDING_SIZE, dest="word_emb_dim", type=int, help="Size of word embedding layer (ignored if pre-trained word embeddings are loaded)")
-	parser.add_argument("--char-emb-dim", default=DEFAULT_CHAR_EMBEDDING_SIZE, dest="char_emb_dim", type=int, help="Size of character embedding layer (ignored if --use-char-rnn is not set)")
+	parser.add_argument("--char-num-lstm-layers", default=2, dest="char_num_lstm_layers", type=int, help="Number of character LSTM layers (default: 2)")
+	parser.add_argument("--char-emb-dim", default=128, dest="char_embedding_dim", type=int, help="Size of character embedding layer")
+	parser.add_argument("--char-hidden-dim", default=256, dest="char_hidden_dim", type=int, help="Size of character LSTM hidden layers (default: 256)")
+	parser.add_argument("--word-num-lstm-layers", default=2, dest="word_num_lstm_layers", type=int, help="Number of word LSTM layers (default: 2)")
+	parser.add_argument("--word-hidden-dim", default=256, dest="word_hidden_dim", type=int, help="Size of word LSTM hidden layers (default: 256)")
 	parser.add_argument("--learning-rate", default=0.01, dest="learning_rate", type=float, help="Initial learning rate (default: 0.01)")
-	parser.add_argument("--dropout", default=-1, dest="dropout", type=float, help="Amount of dropout to apply to LSTM part of graph (default: off)")
-	parser.add_argument("--no-we-update", dest="no_we_update", action="store_true", help="Word Embeddings aren't updated")
+	parser.add_argument("--dropout", default=0.2, dest="dropout", type=float, help="Amount of dropout to apply to LSTM parts of graph (default: 0.2, use -1 to turn off)")
 	parser.add_argument("--loss-prop", dest="loss_prop", action="store_true", help="Proportional loss magnitudes")
-	parser.add_argument("--use-char-rnn", dest="use_char_rnn", action="store_true", help="Use character RNN (default : off)")
 	
 	# other
 	parser.add_argument("--dynet-mem", help="Ignore this external argument")
@@ -519,7 +472,6 @@ if __name__ == "__main__":
 			logging.info("Load pickled vocabulary from {}".format(options.vocab))
 			vocab_dataset = pickle.load(open(options.vocab, "rb"))
 			training_vocab = vocab_dataset["training_vocab"]
-			w2i = vocab_dataset["w2i"]
 			t2is = vocab_dataset["t2is"]
 			c2i = vocab_dataset["c2i"]
 	else:
@@ -535,20 +487,18 @@ if __name__ == "__main__":
 			logging.info("Load pickled training data from {}".format(options.training_data))
 			training_instances = pickle.load(open(options.training_data, "rb"))
 			if not training_vocab:
-				logging.error("Cannot use pickled training data without corresponding vocabulary file (--vocab not set)")
-				sys.exit(1)
+				logging.info("Vocabulary file not found (--vocab not set), OOV rates will be inaccurate")
 		
 		# read training data from text file
 		else:
 			if not training_vocab:
 				training_vocab = collections.Counter()
-				w2i = {UNK_TAG: 0} # mapping from word to index
 				t2is = {} # mapping from attribute name to mapping from tag to index
-				c2i = {UNK_CHAR_TAG: 0, PADDING_CHAR: 1} # mapping from character to index, for char-RNN concatenations
+				c2i = {UNK_TAG: 0, PADDING_CHAR: 1} # mapping from character to index, for char-RNN concatenations
 			# if we already have loaded the vocabulary, it should include these mappings
 			
 			logging.info("Read training data from {}".format(options.training_data))
-			training_instances = read_file(options.training_data, w2i, t2is, c2i, training_vocab, options.number_index, options.w_token_index, options.c_token_index, options.pos_index, options.morph_index, update_vocab=True)
+			training_instances = read_file(options.training_data, t2is, c2i, training_vocab, options.number_index, options.token_index, options.pos_index, options.morph_index, update_vocab=True)
 			
 			# trim training set for size evaluation (sentence based)
 			if len(training_instances) > options.training_sentence_size:
@@ -574,7 +524,7 @@ if __name__ == "__main__":
 				t2i[START_TAG] = len(t2i)
 				t2i[END_TAG] = len(t2i)
 			
-			logging.info("Training data loaded: {} instances, {} vocabulary items, {} stored vocabulary items, {} characters, {} tag keys".format(len(training_instances), len(training_vocab), len(w2i), len(c2i), len(t2is)))		
+			logging.info("Training data loaded: {} instances, {} vocabulary items, {} characters, {} tag keys".format(len(training_instances), len(training_vocab), len(c2i), len(t2is)))		
 			
 		if options.training_data_save:
 			logging.info("Save training data to {}".format(options.training_data_save))
@@ -583,7 +533,7 @@ if __name__ == "__main__":
 			
 		if options.vocab_save:
 			logging.info("Save vocabulary to {}".format(options.vocab_save))
-			vocab = {"training_vocab": training_vocab, "w2i": w2i, "t2is": t2is, "c2i": c2i}
+			vocab = {"training_vocab": training_vocab, "t2is": t2is, "c2i": c2i}
 			with open(options.vocab_save, "wb") as outfile:
 				pickle.dump(vocab, outfile)
 			
@@ -597,8 +547,7 @@ if __name__ == "__main__":
 			sys.exit(1)
 		
 		if not training_vocab:
-			logging.error("Cannot use pickled dev data without corresponding vocabulary file (--vocab not set)")
-			sys.exit(1)
+			logging.info("Vocabulary file not found (--vocab not set), OOV rates will be inaccurate")
 		
 		if options.dev_data.endswith(".pkl"):
 			logging.info("Load pickled dev data from {}".format(options.dev_data))
@@ -606,7 +555,7 @@ if __name__ == "__main__":
 		else:
 			logging.info("Read dev data from {}".format(options.dev_data))
 			dev_vocab = collections.Counter()
-			dev_instances = read_file(options.dev_data, w2i, t2is, c2i, dev_vocab, options.number_index, options.w_token_index, options.c_token_index, options.pos_index, options.morph_index, update_vocab=False)
+			dev_instances = read_file(options.dev_data, t2is, c2i, dev_vocab, options.number_index, options.token_index, options.pos_index, options.morph_index, update_vocab=False)
 		
 		logging.info("Dev data loaded: {} instances".format(len(dev_instances)))
 		
@@ -626,7 +575,6 @@ if __name__ == "__main__":
 	
 	if training_vocab:
 		# Inverse vocabulary mapping
-		i2w = { i: w for w, i in w2i.items() } # Inverse mapping
 		i2ts = { att: {i: t for t, i in t2i.items()} for att, t2i in t2is.items() }
 		i2c = { i: c for c, i in c2i.items() }
 		
@@ -644,29 +592,21 @@ if __name__ == "__main__":
 			sys.exit(1)
 		settings = pickle.load(open(options.settings, "rb"))
 		model = LSTMTagger(tagset_sizes=settings["tagset_sizes"],
-					num_lstm_layers=settings["num_lstm_layers"],
-					hidden_dim=settings["hidden_dim"],
-					word_embeddings=settings["word_embeddings"],
-					no_we_update = settings["no_we_update"],
-					use_char_rnn=settings["use_char_rnn"],
 					charset_size=settings["charset_size"],
+					char_num_lstm_layers=settings["char_num_lstm_layers"],
 					char_embedding_dim=settings["char_embedding_dim"],
+					char_hidden_dim=settings["char_hidden_dim"],
+					word_num_lstm_layers=settings["word_num_lstm_layers"],
+					word_hidden_dim=settings["word_hidden_dim"],
 					att_props=settings["att_props"],
-					vocab_size=settings["vocab_size"],
-					word_embedding_dim=settings["word_embedding_dim"],
 					populate_from_file=options.params)
 		logging.info("Model loaded from files {} and {}".format(options.settings, options.params))
+		
 	
 	# train new model
 	else:
 		logging.info("Create new model")
 		tagset_sizes = { att: len(t2i) for att, t2i in t2is.items() }
-		
-		if options.word_embeddings:
-			word_embeddings = utils.read_pretrained_embeddings(options.word_embeddings, w2i)
-			logging.info("Using pretrained embeddings from file {}".format(options.word_embeddings))
-		else:
-			word_embeddings = None
 		
 		if options.loss_prop:
 			att_props = get_att_prop(training_instances)
@@ -675,20 +615,18 @@ if __name__ == "__main__":
 			att_props = None
 			
 		model = LSTMTagger(tagset_sizes=tagset_sizes,
-						   num_lstm_layers=options.lstm_layers,
-						   hidden_dim=options.hidden_dim,
-						   word_embeddings=word_embeddings,
-						   no_we_update = options.no_we_update,
-						   use_char_rnn=options.use_char_rnn,
-						   charset_size=len(c2i),
-						   char_embedding_dim=DEFAULT_CHAR_EMBEDDING_SIZE,
-						   att_props=att_props,
-						   vocab_size=len(w2i),
-						   word_embedding_dim=DEFAULT_WORD_EMBEDDING_SIZE,
-						   save_settings_to_file=options.settings_save)
+						charset_size=len(c2i),
+						char_num_lstm_layers=options.char_num_lstm_layers,
+						char_embedding_dim=options.char_embedding_dim,
+						char_hidden_dim=options.char_hidden_dim,
+						word_num_lstm_layers=options.word_num_lstm_layers,
+						word_hidden_dim=options.word_hidden_dim,
+						att_props=att_props,
+						save_settings_to_file=options.settings_save)
 		
 		########### start of training loop ###########
 		
+		# replace by RMSProp trainer
 		trainer = dy.MomentumSGDTrainer(model.model, options.learning_rate, 0.9)
 		logging.info("Starting training with algorithm: {}, epochs: {}, learning rate: {}, dropout: {}".format(type(trainer), options.num_epochs, options.learning_rate, options.dropout))
 		train_dev_cost = csv.writer(open(options.log_dir + "/train_dev_loss.csv", 'w'))
@@ -712,16 +650,16 @@ if __name__ == "__main__":
 
 			# main training loop
 			for instance in bar(train_instances):
-				if len(instance.w_sentence) == 0: continue
+				if len(instance.sentence) == 0: continue
 
 				gold_tags = instance.tags
 				for att in model.attributes:
 					if att not in instance.tags:
 						# 'pad' entire sentence with none tags
-						gold_tags[att] = [t2is[att][NONE_TAG]] * len(instance.w_sentence)
+						gold_tags[att] = [t2is[att][NONE_TAG]] * len(instance.sentence)
 
 				# calculate all losses for sentence
-				loss_exprs = model.loss(instance.w_sentence, instance.c_sentence, gold_tags)
+				loss_exprs = model.loss(instance.sentence, gold_tags)
 				loss_expr = dy.esum(list(loss_exprs.values()))
 				loss = loss_expr.scalar_value()
 
@@ -729,7 +667,7 @@ if __name__ == "__main__":
 				if np.isnan(loss):
 					assert False, "NaN occured"
 
-				train_loss += (loss / len(instance.w_sentence))
+				train_loss += (loss / len(instance.sentence))
 
 				# backward pass and parameter update
 				loss_expr.backward()
@@ -757,7 +695,7 @@ if __name__ == "__main__":
 					devout_filename = None
 				
 				logging.info("Evaluate dev data")
-				dev_loss = evaluate(model, dev_instances, devout_filename, t2is, i2ts, i2w, i2c, training_vocab)
+				dev_loss = evaluate(model, dev_instances, devout_filename, t2is, i2ts, i2c, training_vocab)
 				logging.info("Dev Loss: {}".format(dev_loss))
 
 				if options.dev_data_out and epoch > 1 and epoch % 10 != 0: # leave outputs from epochs 1,10,20, etc.
@@ -797,8 +735,8 @@ if __name__ == "__main__":
 			sys.exit(1)
 		
 		if not training_vocab:
-			logging.error("Cannot use pickled dev data without corresponding vocabulary file (--vocab not set)")
-			sys.exit(1)
+			logging.info("Vocabulary file not found (--vocab not set), OOV rates will be inaccurate")
+			training_vocab = collections.Counter()
 			
 		if options.test_data.endswith(".pkl"):
 			logging.info("Load pickled test data from {}".format(options.test_data))
@@ -806,7 +744,7 @@ if __name__ == "__main__":
 		else:
 			logging.info("Read test data from {}".format(options.test_data))
 			test_vocab = collections.Counter()
-			test_instances = read_file(options.test_data, w2i, t2is, c2i, test_vocab, options.number_index, options.w_token_index, options.c_token_index, options.pos_index, options.morph_index, update_vocab=False)
+			test_instances = read_file(options.test_data, t2is, c2i, test_vocab, options.number_index, options.token_index, options.pos_index, options.morph_index, update_vocab=False)
 		
 		logging.info("Test data loaded: {} instances".format(len(test_instances)))
 			
@@ -821,7 +759,7 @@ if __name__ == "__main__":
 		
 		if model:
 			logging.info("Evaluate test data")
-			evaluate(model, test_instances, options.test_data_out, t2is, i2ts, i2w, i2c, training_vocab)
+			evaluate(model, test_instances, options.test_data_out, t2is, i2ts, i2c, training_vocab)
 	
 	else:
 		logging.info("No test data provided")
