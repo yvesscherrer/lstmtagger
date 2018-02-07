@@ -286,26 +286,6 @@ Word LSTM: {} layers, {} hidden dimensions per layer
 		'''
 		self.model.save(file_name)
 
-	def old_save(self, file_name):
-		'''
-		Serialize model parameters for future loading and use.
-		Old version (pre dynet 2.0) loaded using initializer in scripts/test_model.py
-		'''
-		members_to_save = []
-		members_to_save.append(self.words_lookup)
-		if (self.use_char_rnn):
-			members_to_save.append(self.char_lookup)
-			members_to_save.append(self.char_bi_lstm)
-		members_to_save.append(self.word_bi_lstm)
-		members_to_save.extend(utils.sortvals(self.lstm_to_tags_params))
-		members_to_save.extend(utils.sortvals(self.lstm_to_tags_bias))
-		members_to_save.extend(utils.sortvals(self.mlp_out))
-		members_to_save.extend(utils.sortvals(self.mlp_out_bias))
-		self.model.save(file_name, members_to_save)
-
-		with open(file_name + "-atts", 'w') as attdict:
-			attdict.write("\t".join(sorted(self.attributes)))
-
 
 ### END OF CLASSES ###
 
@@ -379,7 +359,7 @@ def evaluate(model, instances, outfilename, t2is, i2ts, i2c, training_vocab):
 		loss += (total_loss / len(instance.sentence))
 		
 		if writer:
-			# regenerate output words from c_sentence, removing the padding characters
+			# regenerate output words from sentence, removing the padding characters
 			out_sentence = [("".join([i2c[c] for c in w])).replace(PADDING_CHAR, "") for w in instance.sentence]
 			writer.write("\n" + "\n".join(["\t".join(z) for z in zip(out_sentence, gold_strings, obs_strings, oov_strings)]) + "\n")
 	
@@ -626,8 +606,10 @@ if __name__ == "__main__":
 		
 		########### start of training loop ###########
 		
-		# replace by RMSProp trainer
-		trainer = dy.MomentumSGDTrainer(model.model, options.learning_rate, 0.9)
+		learning_rate = options.learning_rate
+		trainer = dy.MomentumSGDTrainer(model.model, learning_rate, 0.9)
+		# cannot get RMSPropTrainer to work properly, tried with learning rate 0.1 and 0.01
+		#trainer = dy.RMSPropTrainer(model.model, learning_rate=learning_rate, rho=0.9)
 		logging.info("Starting training with algorithm: {}, epochs: {}, learning rate: {}, dropout: {}".format(type(trainer), options.num_epochs, options.learning_rate, options.dropout))
 		train_dev_cost = csv.writer(open(options.log_dir + "/train_dev_loss.csv", 'w'))
 		train_dev_cost.writerow(["Train_cost", "Dev_cost"])
@@ -682,6 +664,12 @@ if __name__ == "__main__":
 			logging.info("Training Loss: {}".format(train_loss))
 			logging.info("")
 			# here used to be a learning rate update, no longer supported in dynet 2.0
+			# why not??? - reintroducing it
+			if (epoch > 0) and (epoch % 10 == 0):
+				logging.info("Change learning rate from {} ...".format(learning_rate))
+				learning_rate /= 2
+				logging.info("... to {}".format(learning_rate))
+				
 
 			# evaluate dev data
 			if dev_instances:
