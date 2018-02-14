@@ -22,9 +22,6 @@ UNK_CHAR_TAG = "<?>"
 PADDING_CHAR = "<*>"
 POS_KEY = "POS"
 
-DEFAULT_WORD_EMBEDDING_SIZE = 64
-DEFAULT_CHAR_EMBEDDING_SIZE = 20
-
 def read_file(filename, w2i, t2is, c2i, vocab_counter, number_index=0, w_token_index=1, c_token_index=1, pos_index=3, morph_index=5, update_vocab=True):
 	"""
 	Read in a dataset and turn it into a list of instances.
@@ -148,19 +145,21 @@ class LSTMTagger:
 	https://github.com/clab/dynet_tutorial_examples/blob/master/tutorial_bilstm_tagger.py
 	'''
 
-	def __init__(self, tagset_sizes, num_lstm_layers, hidden_dim, word_embeddings, no_we_update, use_char_rnn, charset_size, char_embedding_dim, att_props=None, vocab_size=None, word_embedding_dim=None, populate_from_file=None, save_settings_to_file=None):
+	def __init__(self, tagset_sizes, charset_size, vocab_size, char_num_lstm_layers, char_embedding_dim, char_hidden_dim, word_num_lstm_layers, word_embedding_dim, word_embeddings, word_hidden_dim, no_we_update, use_char_rnn, att_props=None, populate_from_file=None, save_settings_to_file=None):
 		'''
 		:param tagset_sizes: dictionary of attribute_name:number_of_possible_tags
-		:param num_lstm_layers: number of desired LSTM layers
-		:param hidden_dim: size of hidden dimension (same for all LSTM layers, including character-level)
-		:param word_embeddings: pre-trained list of embeddings, assumes order by word ID (optional)
-		:param no_we_update: if toggled, don't update embeddings
-		:param use_char_rnn: use "char->tag" option, i.e. concatenate character-level LSTM outputs to word representations (and train underlying LSTM). Only 1-layer is supported.
 		:param charset_size: number of characters expected in dataset (needed for character embedding initialization)
-		:param char_embedding_dim: desired character embedding dimension
-		:param att_props: proportion of loss to assign each attribute for back-propagation weighting (optional)
 		:param vocab_size: number of words in model (ignored if pre-trained embeddings are given)
+		:param char_num_lstm_layers: number of desired layers for the LSTM representing characters in words
+		:param char_embedding_dim: desired character embedding dimension
+		:param char_hidden_dim: size of hidden dimensions of the LSTM representing characters in words (same for all LSTM layers)
+		:param word_num_lstm_layers: number of desired layers for the LSTM representing words in sentences
 		:param word_embedding_dim: desired word embedding dimension (ignored if pre-trained embeddings are given)
+		:param word_embeddings: pre-trained list of embeddings, assumes order by word ID (may be None)
+		:param word_hidden_dim: size of hidden dimensions of the LSTM representing words in sentences (same for all LSTM layers)
+		:param no_we_update: if toggled, don't update embeddings
+		:param use_char_rnn: use "char->tag" option, i.e. concatenate character-level LSTM outputs to word representations (and train underlying LSTM)
+		:param att_props: proportion of loss to assign each attribute for back-propagation weighting (optional)
 		:param populate_from_file: populate weights from saved file
 		'''
 		self.model = dy.ParameterCollection()	# ParameterCollection is the new name for Model
@@ -185,14 +184,14 @@ class LSTMTagger:
 		self.use_char_rnn = use_char_rnn
 		if use_char_rnn:
 			self.char_lookup = self.model.add_lookup_parameters((charset_size, char_embedding_dim), name=b"ce")
-			self.char_bi_lstm = dy.BiRNNBuilder(1, char_embedding_dim, hidden_dim, self.model, dy.LSTMBuilder)
+			self.char_bi_lstm = dy.BiRNNBuilder(char_num_lstm_layers, char_embedding_dim, char_hidden_dim, self.model, dy.LSTMBuilder)
 
 		# Word LSTM parameters
 		if use_char_rnn:
-			input_dim = word_embedding_dim + hidden_dim
+			input_dim = word_embedding_dim + char_hidden_dim
 		else:
 			input_dim = word_embedding_dim
-		self.word_bi_lstm = dy.BiRNNBuilder(num_lstm_layers, input_dim, hidden_dim, self.model, dy.LSTMBuilder)
+		self.word_bi_lstm = dy.BiRNNBuilder(word_num_lstm_layers, input_dim, word_hidden_dim, self.model, dy.LSTMBuilder)
 
 		# Matrix that maps from Bi-LSTM output to num tags
 		self.lstm_to_tags_params = {}
@@ -201,7 +200,7 @@ class LSTMTagger:
 		self.mlp_out_bias = {}
 		for att in self.attributes:	# need to be in consistent order for saving and loading
 			set_size = tagset_sizes[att]
-			self.lstm_to_tags_params[att] = self.model.add_parameters((set_size, hidden_dim), name=bytes(att+"H", 'utf-8'))
+			self.lstm_to_tags_params[att] = self.model.add_parameters((set_size, word_hidden_dim), name=bytes(att+"H", 'utf-8'))
 			self.lstm_to_tags_bias[att] = self.model.add_parameters(set_size, name=bytes(att+"Hb", 'utf-8'))
 			self.mlp_out[att] = self.model.add_parameters((set_size, set_size), name=bytes(att+"O", 'utf-8'))
 			self.mlp_out_bias[att] = self.model.add_parameters(set_size, name=bytes(att+"Ob", 'utf-8'))
@@ -209,33 +208,38 @@ class LSTMTagger:
 		if save_settings_to_file:
 			setting_dict = {
 				"tagset_sizes": tagset_sizes,
-				"num_lstm_layers": num_lstm_layers,
-				"hidden_dim": hidden_dim,
+				"charset_size": charset_size,
+				"vocab_size": vocab_size,
+				"char_num_lstm_layers": char_num_lstm_layers,
+				"char_embedding_dim": char_embedding_dim,
+				"char_hidden_dim": char_hidden_dim,
+				"word_num_lstm_layers": word_num_lstm_layers,
+				"word_embedding_dim": word_embedding_dim,
+				"word_hidden_dim": word_hidden_dim,
 				"word_embeddings": word_embeddings,
 				"no_we_update": no_we_update,
 				"use_char_rnn": use_char_rnn,
-				"charset_size": charset_size,
-				"char_embedding_dim": char_embedding_dim,
-				"att_props": att_props,
-				"vocab_size": vocab_size,
-				"word_embedding_dim": word_embedding_dim
+				"att_props": att_props
 			}
 			with open(save_settings_to_file, "wb") as outfile:
 				pickle.dump(setting_dict, outfile)
 		
 		if populate_from_file:
 			self.model.populate(populate_from_file)
-	
-		s = '''LSTM tagging model created with following parameters:
 
-LSTM: {} layers, {} hidden dimensions
-Word embeddings: {} dimensions
-Concatenating character LSTM: {}
-Char embeddings: {} dimensions
-Vocabulary size: {}
+		s = '''LSTM tagging model created with following parameters:
 Character set size: {}
+Vocabulary size: {}
 Tagset sizes: {}
-'''.format(num_lstm_layers, hidden_dim, word_embedding_dim, use_char_rnn, char_embedding_dim, vocab_size, charset_size, ", ".join(["{}:{}".format(x, tagset_sizes[x]) for x in sorted(tagset_sizes)]))
+'''.format(charset_size, vocab_size, ", ".join(["{}:{}".format(x, tagset_sizes[x]) for x in sorted(tagset_sizes)]))
+		if use_char_rnn:
+			s += '''Character LSTM: {} input embedding dimensions, {} layers, {} hidden dimensions per layer
+'''.format(char_embedding_dim, char_num_lstm_layers, char_hidden_dim)
+		else:
+			s += '''No character LSTM
+'''
+		s += '''Word LSTM: {} input embedding dimensions, {} layers, {} hidden dimensions per layer
+'''.format(word_embedding_dim, word_num_lstm_layers, word_hidden_dim)
 		logging.info(s)
 		
 
@@ -484,18 +488,20 @@ if __name__ == "__main__":
 	# Options for easily reducing the size of the training data
 	parser.add_argument("--training-sentence-size", default=sys.maxsize, dest="training_sentence_size", type=int, help="Instance count of training set (default: unlimited)")
 	parser.add_argument("--training-token-size", default=sys.maxsize, dest="training_token_size", type=int, help="Token count of training set (default: unlimited)")
-	
+
 	# Model settings
 	parser.add_argument("--num-epochs", default=20, dest="num_epochs", type=int, help="Number of full passes through training set (default: 20; disable training by setting --num-epochs to negative value)")
-	parser.add_argument("--num-lstm-layers", default=2, dest="lstm_layers", type=int, help="Number of LSTM layers (default: 2)")
-	parser.add_argument("--hidden-dim", default=128, dest="hidden_dim", type=int, help="Size of LSTM hidden layers (default: 128)")
-	parser.add_argument("--word-emb-dim", default=DEFAULT_WORD_EMBEDDING_SIZE, dest="word_emb_dim", type=int, help="Size of word embedding layer (ignored if pre-trained word embeddings are loaded)")
-	parser.add_argument("--char-emb-dim", default=DEFAULT_CHAR_EMBEDDING_SIZE, dest="char_emb_dim", type=int, help="Size of character embedding layer (ignored if --use-char-rnn is not set)")
+	parser.add_argument("--char-num-lstm-layers", default=1, dest="char_num_lstm_layers", type=int, help="Number of character LSTM layers (default: 1)")
+	parser.add_argument("--char-emb-dim", default=20, dest="char_embedding_dim", type=int, help="Size of character embedding layer")
+	parser.add_argument("--char-hidden-dim", default=128, dest="char_hidden_dim", type=int, help="Size of character LSTM hidden layers (default: 128)")
+	parser.add_argument("--word-num-lstm-layers", default=2, dest="word_num_lstm_layers", type=int, help="Number of word LSTM layers (default: 2)")
+	parser.add_argument("--word-emb-dim", default=64, dest="word_embedding_dim", type=int, help="Size of word embedding layer (ignored if pre-trained word embeddings are loaded)")
+	parser.add_argument("--word-hidden-dim", default=128, dest="word_hidden_dim", type=int, help="Size of word LSTM hidden layers (default: 128)")
 	parser.add_argument("--learning-rate", default=0.01, dest="learning_rate", type=float, help="Initial learning rate (default: 0.01)")
-	parser.add_argument("--dropout", default=-1, dest="dropout", type=float, help="Amount of dropout to apply to LSTM part of graph (default: off)")
-	parser.add_argument("--no-we-update", dest="no_we_update", action="store_true", help="Word Embeddings aren't updated")
+	parser.add_argument("--dropout", default=-1, dest="dropout", type=float, help="Amount of dropout to apply to LSTM parts of graph (default: turned off)")
 	parser.add_argument("--loss-prop", dest="loss_prop", action="store_true", help="Proportional loss magnitudes")
-	parser.add_argument("--use-char-rnn", dest="use_char_rnn", action="store_true", help="Use character RNN (default : off)")
+	parser.add_argument("--use-char-rnn", dest="use_char_rnn", action="store_true", help="Use character RNN (default: off)")
+	parser.add_argument("--no-we-update", dest="no_we_update", action="store_true", help="Do not update word embeddings (default: off)")
 	
 	# other
 	parser.add_argument("--dynet-mem", help="Ignore this external argument")
@@ -644,16 +650,18 @@ if __name__ == "__main__":
 			sys.exit(1)
 		settings = pickle.load(open(options.settings, "rb"))
 		model = LSTMTagger(tagset_sizes=settings["tagset_sizes"],
-					num_lstm_layers=settings["num_lstm_layers"],
-					hidden_dim=settings["hidden_dim"],
+					charset_size=settings["charset_size"],
+					vocab_size=settings["vocab_size"],
+					char_num_lstm_layers=settings["char_num_lstm_layers"],
+					char_embedding_dim=settings["char_embedding_dim"],
+					char_hidden_dim=settings["char_hidden_dim"],
+					word_num_lstm_layers=settings["word_num_lstm_layers"],
+					word_embedding_dim=settings["word_embedding_dim"],
 					word_embeddings=settings["word_embeddings"],
+					word_hidden_dim=settings["word_hidden_dim"],
 					no_we_update = settings["no_we_update"],
 					use_char_rnn=settings["use_char_rnn"],
-					charset_size=settings["charset_size"],
-					char_embedding_dim=settings["char_embedding_dim"],
 					att_props=settings["att_props"],
-					vocab_size=settings["vocab_size"],
-					word_embedding_dim=settings["word_embedding_dim"],
 					populate_from_file=options.params)
 		logging.info("Model loaded from files {} and {}".format(options.settings, options.params))
 	
@@ -675,17 +683,19 @@ if __name__ == "__main__":
 			att_props = None
 			
 		model = LSTMTagger(tagset_sizes=tagset_sizes,
-						   num_lstm_layers=options.lstm_layers,
-						   hidden_dim=options.hidden_dim,
-						   word_embeddings=word_embeddings,
-						   no_we_update = options.no_we_update,
-						   use_char_rnn=options.use_char_rnn,
-						   charset_size=len(c2i),
-						   char_embedding_dim=DEFAULT_CHAR_EMBEDDING_SIZE,
-						   att_props=att_props,
-						   vocab_size=len(w2i),
-						   word_embedding_dim=DEFAULT_WORD_EMBEDDING_SIZE,
-						   save_settings_to_file=options.settings_save)
+							charset_size=len(c2i),
+							vocab_size=len(w2i),
+							char_num_lstm_layers=options.char_num_lstm_layers,
+							char_embedding_dim=options.char_embedding_dim,
+							char_hidden_dim=options.char_hidden_dim,
+							word_num_lstm_layers=options.word_num_lstm_layers,
+							word_embedding_dim=options.word_embedding_dim,
+							word_embeddings=options.word_embeddings,
+							word_hidden_dim=options.word_hidden_dim,
+							no_we_update = options.no_we_update,
+							use_char_rnn=options.use_char_rnn,
+							att_props=att_props,
+							save_settings_to_file=options.settings_save)
 		
 		########### start of training loop ###########
 		
@@ -744,6 +754,11 @@ if __name__ == "__main__":
 			logging.info("Training Loss: {}".format(train_loss))
 			logging.info("")
 			# here used to be a learning rate update, no longer supported in dynet 2.0
+			# why not??? - reintroducing it
+			if (epoch > 0) and (epoch % 10 == 0):
+				logging.info("Change learning rate from {} ...".format(learning_rate))
+				learning_rate /= 2
+				logging.info("... to {}".format(learning_rate))
 
 			# evaluate dev data
 			if dev_instances:
