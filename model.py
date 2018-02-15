@@ -699,7 +699,8 @@ if __name__ == "__main__":
 		
 		########### start of training loop ###########
 		
-		trainer = dy.MomentumSGDTrainer(model.model, options.learning_rate, 0.9)
+		learning_rate = options.learning_rate
+		trainer = dy.MomentumSGDTrainer(model.model, learning_rate, 0.9)
 		logging.info("Starting training with algorithm: {}, epochs: {}, learning rate: {}, dropout: {}".format(type(trainer), options.num_epochs, options.learning_rate, options.dropout))
 		train_dev_cost = csv.writer(open(options.log_dir + "/train_dev_loss.csv", 'w'))
 		train_dev_cost.writerow(["Train_cost", "Dev_cost"])
