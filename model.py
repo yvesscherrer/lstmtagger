@@ -191,16 +191,16 @@ class LSTMTagger:
 			self.att_props = None
 		
 		self.use_char_lstm = char_num_layers > 0
-		self.use_word_emb = word_pretrained_embeddings or (word_embedding_dim > 0)
+		self.use_word_emb = (word_pretrained_embeddings is not None) or (word_embedding_dim > 0)
 
 		tag_input_dim = 0
 		if self.use_word_emb:
-			if word_pretrained_embeddings:
+			if word_pretrained_embeddings is not None:
 				word_set_size = word_pretrained_embeddings.shape[0]
 				word_embedding_dim = word_pretrained_embeddings.shape[1]
 				logging.info("Use pretrained embeddings: setting vocabulary size to {} and dimensions to {}".format(word_set_size, word_embedding_dim))
 			self.word_lookup = self.model.add_lookup_parameters((word_set_size, word_embedding_dim), name=b"we")
-			if word_pretrained_embeddings:
+			if word_pretrained_embeddings is not None:
 				self.word_lookup.init_from_array(word_pretrained_embeddings)
 			self.word_update_emb = word_update_emb
 			tag_input_dim += word_embedding_dim
@@ -254,8 +254,8 @@ class LSTMTagger:
 		
 		if self.use_word_emb:
 			s += "- Word embeddings: {} word types, {} embedding dimensions".format(word_set_size, word_embedding_dim)
-			if word_pretrained_embeddings:
-				s += ", pretrained from {}".format(word_pretrained_embeddings)
+			if word_pretrained_embeddings is not None:
+				s += ", pretrained"
 			s += "\n"
 		else:
 			s += "- No word embeddings\n"
@@ -409,9 +409,11 @@ def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab
 			for w_word, c_word, gold, out in itertools.zip_longest(instance.w_sentence, instance.c_sentence, tags, out_tags):
 				if w_word and w_word in i2w:
 					is_oov = i2w[w_word] not in training_vocab
-				else:
+				elif c_word:
 					c_word_str = ("".join([i2c[c] for c in c_word])).replace(PADDING_CHAR, "")
 					is_oov = c_word_str not in training_vocab
+				else:
+					is_oov = True
 				
 				if gold == out:
 					correct[att] += 1
@@ -437,9 +439,11 @@ def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab
 			for w_word, c_word, gold, out, oov in itertools.zip_longest(instance.w_sentence, instance.c_sentence, gold_strings, obs_strings, oov_strings):
 				if w_word and w_word in i2w and i2w[w_word] != UNK_TAG:
 					word_str = i2w[w_word]
-				else:
+				elif c_word:
 					# regenerate output words from c_sentence, removing the padding characters
 					word_str = ("".join([i2c[c] for c in c_word])).replace(PADDING_CHAR, "")
+				else:
+					word_str = UNK_TAG
 				out_sentence.append(word_str)
 			writer.write("\n" + "\n".join(["\t".join(z) for z in zip(out_sentence, gold_strings, obs_strings, oov_strings)]) + "\n")
 	
@@ -487,6 +491,7 @@ if __name__ == "__main__":
 	parser.add_argument("--settings-save", dest="settings_save", default=None, help="Pickle file to which the model architecture is saved")
 	parser.add_argument("--params", dest="params", default=None, help="Binary file (.bin) from which the model weights are loaded")
 	parser.add_argument("--params-save", dest="params_save", default=None, help="Binary files (.bin) in which the model weights are saved (epoch count is added in front of file extension)")
+	parser.add_argument("--keep-every", dest="keep_every", type=int, default=10, help="Keep model files and dev output every n epochs (default: 10, 0 only saves last)")
 	parser.add_argument("--log-dir", dest="log_dir", default="log", help="directory in which the log files are saved")
 	
 	# File format (default options are fine for UD-formatted files)
@@ -740,7 +745,8 @@ if __name__ == "__main__":
 		train_dev_cost = csv.writer(open(options.log_dir + "/train_dev_loss.csv", 'w'))
 		train_dev_cost.writerow(["Train_cost", "Dev_cost"])
 
-		for epoch in range(int(options.num_epochs)):
+		for epoch in range(1, options.num_epochs + 1):		# epoch counts starts at 1 and includes options.num_epochs
+			logging.info("Starting training epoch {}".format(epoch))
 			bar = progressbar.ProgressBar()
 
 			# set up epoch
@@ -748,6 +754,7 @@ if __name__ == "__main__":
 			train_loss = 0.0
 			if options.dropout > 0:
 				model.set_dropout(options.dropout)
+			is_last_epoch = (epoch == options.num_epochs)
 
 			# debug samples small set for faster full loop
 			if options.debug:
@@ -784,36 +791,32 @@ if __name__ == "__main__":
 			train_loss = train_loss / len(train_instances)
 
 			# log epoch's train phase
-			logging.info("")
-			logging.info("Epoch {} complete".format(epoch + 1))
 			logging.info("Number of training instances: {}".format(len(train_instances)))
 			logging.info("Training Loss: {}".format(train_loss))
 			logging.info("")
-			# learning rate update
-			logging.info("Change learning rate from {} ...".format(trainer.learning_rate))
-			trainer.learning_rate *= 1.0-options.decay		# this was /= but this makes the learning rate increase, which shouldn't be?
-			logging.info("... to {}".format(trainer.learning_rate))
 
 			# evaluate dev data
 			if dev_instances:
 				if options.dev_data_out:
-					if epoch+1 == options.num_epochs:
+					if is_last_epoch:
 						devout_filename = options.dev_data_out
 					else:
 						devout_filename, devout_fileext = os.path.splitext(options.dev_data_out)
-						devout_filename = "{}.epoch{:02d}{}".format(devout_filename, epoch+1, devout_fileext)
+						devout_filename = "{}.epoch{:02d}{}".format(devout_filename, epoch, devout_fileext)
 				else:
 					devout_filename = None
 				
 				logging.info("Evaluate dev data")
 				dev_loss = evaluate(model, dev_instances, devout_filename, t2is, i2ts, i2w, i2c, training_vocab)
 				logging.info("Dev Loss: {}".format(dev_loss))
-
-				if options.dev_data_out and epoch > 1 and epoch % 10 != 0: # leave outputs from epochs 1,10,20, etc.
-					devout_filename, devout_fileext = os.path.splitext(options.dev_data_out)
-					old_devout_filename = "{}.epoch{:02d}{}".format(devout_filename, epoch, devout_fileext)
-					logging.info("Removing file from previous epoch: {}".format(old_devout_filename))
-					os.remove(old_devout_filename)
+				
+				# remove output of previous epoch if (a) there is output and we're not in the first epoch, and (b1) we don't want to save anything, or (b2) it is not the second epoch and it is not one of the epochs we want to save
+				if options.dev_data_out and epoch > 1:
+					if (options.keep_every <= 0) or ((epoch > 2) and ((epoch-1) % options.keep_every != 0)):
+						devout_filename, devout_fileext = os.path.splitext(options.dev_data_out)
+						old_devout_filename = "{}.epoch{:02d}{}".format(devout_filename, epoch-1, devout_fileext)
+						logging.info("Removing file from previous epoch: {}".format(old_devout_filename))
+						os.remove(old_devout_filename)
 				
 				train_dev_cost.writerow([train_loss, dev_loss])
 			else:
@@ -821,19 +824,26 @@ if __name__ == "__main__":
 
 			# serialize model
 			if options.params_save:
-				if epoch+1 == options.num_epochs:
+				if is_last_epoch:
 					param_filename = options.params_save
 				else:
 					param_filename, param_fileext = os.path.splitext(options.params_save)
-					param_filename = "{}.epoch{:02d}{}".format(param_filename, epoch+1, param_fileext)
+					param_filename = "{}.epoch{:02d}{}".format(param_filename, epoch, param_fileext)
 				logging.info("Saving model to {}".format(param_filename))
 				model.save(param_filename)
-				if epoch > 1 and epoch % 10 != 0: # leave models from epochs 1,10,20, etc.
-					param_filename, param_fileext = os.path.splitext(options.params_save)
-					old_param_filename = "{}.epoch{:02d}{}".format(param_filename, epoch, param_fileext)
-					logging.info("Removing file from previous epoch: {}".format(old_param_filename))
-					os.remove(old_param_filename)
-					
+				if options.params_save and epoch > 1:
+					if (options.keep_every <= 0) or ((epoch > 2) and ((epoch-1) % options.keep_every != 0)):
+						param_filename, param_fileext = os.path.splitext(options.params_save)
+						old_param_filename = "{}.epoch{:02d}{}".format(param_filename, epoch-1, param_fileext)
+						logging.info("Removing file from previous epoch: {}".format(old_param_filename))
+						os.remove(old_param_filename)
+			
+			# learning rate update
+			temp = trainer.learning_rate
+			trainer.learning_rate *= 1.0-options.decay		# this was /= but this makes the learning rate increase, which shouldn't be?
+			logging.info("Change learning rate from {} to {}".format(temp, trainer.learning_rate))
+			logging.info("Epoch {} completed".format(epoch))
+			logging.info("")
 			# epoch loop ends
 		
 		########### end of training loop ###########
