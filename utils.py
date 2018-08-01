@@ -47,7 +47,7 @@ def split_tagstring(s, uni_key=False, has_pos=False):
 	return ret
 
 
-def morphotag_strings(i2ts, tag_mapping, pos_separate_col=True):
+def morphotag_strings(i2ts, tag_mapping, pos_separate_col=True, ignore=[]):
 	senlen = len(list(tag_mapping.values())[0])
 	key_value_strs = []
 
@@ -56,6 +56,8 @@ def morphotag_strings(i2ts, tag_mapping, pos_separate_col=True):
 	for j in range(senlen):
 		place_strs = []
 		for att, seq in tag_mapping.items():
+			if att in ignore:
+				continue
 			if j >= len(seq):
 				print("Accessing inexistent index: attribute {}, position {}, sequence {}".format(att, j, str(tag_mapping.items())))
 				val = NONE_TAG

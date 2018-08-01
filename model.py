@@ -371,7 +371,7 @@ def get_att_prop(instances):
 	return {att:(1.0 - (att_counts[att] / total_tokens)) for att in att_counts}
 
 
-def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab):
+def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab, no_eval_feats=[]):
 	model.disable_dropout()
 	loss = 0.0
 	correct = Counter()
@@ -389,17 +389,21 @@ def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab
 		if instance.length == 0: continue
 		gold_tags = instance.tags
 		for att in model.attributes:
+			if att in no_eval_feats:
+				continue
 			if att not in instance.tags:
 				gold_tags[att] = [t2is[att][NONE_TAG]] * instance.length
 		losses = model.loss(instance.w_sentence, instance.c_sentence, gold_tags)
 		total_loss = sum([l.scalar_value() for l in losses.values()])
 		out_tags_set = model.tag_sentence(instance.w_sentence, instance.c_sentence)
 
-		gold_strings = utils.morphotag_strings(i2ts, gold_tags)
-		obs_strings = utils.morphotag_strings(i2ts, out_tags_set)
+		gold_strings = utils.morphotag_strings(i2ts, gold_tags, ignore=no_eval_feats)
+		obs_strings = utils.morphotag_strings(i2ts, out_tags_set, ignore=no_eval_feats)
 		for g, o in zip(gold_strings, obs_strings):
 			f1_eval.add_instance(utils.split_tagstring(g, has_pos=True), utils.split_tagstring(o, has_pos=True))
 		for att, tags in gold_tags.items():
+			if att in no_eval_feats:
+				continue
 			# display the evaluation figures if we have ever seen a POS tag != NONE in the gold
 			if (not display_eval) and (att == POS_KEY) and any([t != t2is[POS_KEY][NONE_TAG] for t in tags]):
 				display_eval = True
@@ -459,6 +463,8 @@ def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab
 		if total_wrong[POS_KEY] > 0:
 			logging.info("POS % Wrong that are OOV: {}".format(total_wrong_oov[POS_KEY] / total_wrong[POS_KEY]))
 		for attr in model.attributes:
+			if attr in no_eval_feats:
+				continue
 			if attr != POS_KEY:
 				logging.info("{} F1: {}".format(attr, f1_eval.mic_f1(att = attr)))
 		logging.info("Total attribute F1s: {} micro, {} macro, POS included = {}".format(f1_eval.mic_f1(), f1_eval.mac_f1(), False))
@@ -502,6 +508,7 @@ if __name__ == "__main__":
 	parser.add_argument("--c-token-index", dest="c_token_index", type=int, help="Field in which the tokens used for the character embeddings are stored (default: 1)", default=1)
 	parser.add_argument("--pos-index", dest="pos_index", type=int, help="Field in which the main POS is stored (default, UD tags: 3) (original non-UD tag: 4)", default=3)
 	parser.add_argument("--morph-index", dest="morph_index", type=int, help="Field in which the morphology tags are stored (default: 5); use negative value if morphosyntactic tags should not be considered", default=5)
+	parser.add_argument("--no-eval-feats", dest="no_eval_feats", type=str, help="(Comma-separated) list of morphological features that should be ignored during evaluation; typically used for additional tasks in multitask settings", default="")
 	
 	# Options for easily reducing the size of the training data
 	parser.add_argument("--training-sentence-size", default=sys.maxsize, dest="training_sentence_size", type=int, help="Instance count of training set (default: unlimited)")
@@ -554,6 +561,9 @@ if __name__ == "__main__":
 	if options.word_embedding_dim > 0 and options.word_pretrained_embeddings is None and not options.word_update_emb:
 		logging.info("Setting word_update_emb to True because word_embedding_dim is set to {} and word_pretrained_embeddings is not given".format(options.word_embedding_dim))
 		options.word_update_emb = True
+	options.no_eval_feats = options.no_eval_feats.strip().split(",")
+	if options.no_eval_feats != []:
+		logging.info("Disregard the following features in evaluation: {}".format(",".join(options.no_eval_feats)))
 	
 	if options.vocab:
 		if not os.path.exists(options.vocab):
@@ -808,7 +818,7 @@ if __name__ == "__main__":
 					devout_filename = None
 				
 				logging.info("Evaluate dev data")
-				dev_loss = evaluate(model, dev_instances, devout_filename, t2is, i2ts, i2w, i2c, training_vocab)
+				dev_loss = evaluate(model, dev_instances, devout_filename, t2is, i2ts, i2w, i2c, training_vocab, options.no_eval_feats)
 				logging.info("Dev Loss: {}".format(dev_loss))
 				
 				# remove output of previous epoch if (a) there is output and we're not in the first epoch, and (b1) we don't want to save anything, or (b2) it is not the second epoch and it is not one of the epochs we want to save
@@ -881,7 +891,7 @@ if __name__ == "__main__":
 		
 		if model:
 			logging.info("Evaluate test data")
-			evaluate(model, test_instances, options.test_data_out, t2is, i2ts, i2w, i2c, training_vocab)
+			evaluate(model, test_instances, options.test_data_out, t2is, i2ts, i2w, i2c, training_vocab, options.no_eval_feats)
 	
 	else:
 		logging.info("No test data provided")
