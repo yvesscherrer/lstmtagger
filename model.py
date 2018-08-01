@@ -59,12 +59,13 @@ def read_file(filename, w2i, t2is, c2i, vocab_counter, number_index=0, w_token_i
 
 				# pad tag lists to sentence end
 				slen = max(len(w_sentence), len(c_sentence))
-				for seq in tags.values():
-					if len(seq) < slen:
-						seq.extend([0] * (slen - len(seq))) # 0 guaranteed below to represent NONE_TAG
-
-				# add sentence to dataset
-				instances.append(Instance(w_sentence, c_sentence, tags, slen))
+				if slen > 0:
+					for seq in tags.values():
+						if len(seq) < slen:
+							seq.extend([0] * (slen - len(seq))) # 0 guaranteed below to represent NONE_TAG
+					# add sentence to dataset
+					instances.append(Instance(w_sentence, c_sentence, tags, slen))
+				
 				w_sentence = []
 				c_sentence = []
 				tags = collections.defaultdict(list)
@@ -73,7 +74,7 @@ def read_file(filename, w2i, t2is, c2i, vocab_counter, number_index=0, w_token_i
 			else:
 
 				# parse token information in line
-				data = line.split("\t")
+				data = [x.strip() for x in line.split("\t")]
 				if number_index < 0:
 					idx += 1
 				else:
@@ -146,9 +147,9 @@ def read_file(filename, w2i, t2is, c2i, vocab_counter, number_index=0, w_token_i
 					mtags.append(t2is[k].get(v, NONE_TAG))
 					
 		# last sentence
-		if max(len(w_sentence), len(c_sentence)) > 0:
-			# pad tag lists to sentence end
-			slen = max(len(w_sentence), len(c_sentence))
+		# pad tag lists to sentence end
+		slen = max(len(w_sentence), len(c_sentence))
+		if slen > 0:
 			for seq in tags.values():
 				if len(seq) < slen:
 					seq.extend([0] * (slen - len(seq))) # 0 guaranteed below to represent NONE_TAG
@@ -445,7 +446,7 @@ def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab
 				else:
 					word_str = UNK_TAG
 				out_sentence.append(word_str)
-			writer.write("\n" + "\n".join(["\t".join(z) for z in zip(out_sentence, gold_strings, obs_strings, oov_strings)]) + "\n")
+			writer.write("\n".join(["\t".join(z) for z in zip(out_sentence, gold_strings, obs_strings, oov_strings)]) + "\n\n")
 	
 	if writer: writer.close()
 	loss = loss / len(instances)
