@@ -15,8 +15,6 @@ Instance = collections.namedtuple("Instance", ["w_sentence", "c_sentence", "tags
 
 UNK_TAG = "<UNK>"
 NONE_TAG = "<NONE>"
-#START_TAG = "<START>"
-#END_TAG = "<STOP>"
 UNK_CHAR_TAG = "<?>"
 PADDING_CHAR = "<*>"
 POS_KEY = "POS"
@@ -673,11 +671,6 @@ if __name__ == "__main__":
 						training_instances = training_instances[:i+1]
 						break
 			
-			# Add special tags to dicts
-			# for t2i in t2is.values():
-				# t2i[START_TAG] = len(t2i)
-				# t2i[END_TAG] = len(t2i)
-			
 			logging.info("Training data loaded: {} instances, {} vocabulary items, {} stored vocabulary items, {} characters, {} tag keys".format(len(training_instances), len(training_vocab), len(w2i), len(c2i), len(t2is)))		
 			
 		if options.training_data_save:
@@ -690,10 +683,6 @@ if __name__ == "__main__":
 			vocab = {"training_vocab": training_vocab, "w2i": w2i, "t2is": t2is, "c2i": c2i}
 			with open(options.vocab_save, "wb") as outfile:
 				pickle.dump(vocab, outfile)
-			
-			#with open(options.vocab_save.replace(".pkl", ".txt"), "w", encoding="utf-8") as vocabfile:
-			#	for word in w2i.keys():
-			#		vocabfile.write(word + "\n")
 	
 	if options.dev_data:
 		if not os.path.exists(options.dev_data):
