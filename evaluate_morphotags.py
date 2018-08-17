@@ -56,25 +56,32 @@ class Evaluator(object):
 		if self.mode == 'att_val':
 			return (k,v)
 
-	def mic_f1(self, att = None):
+	def mic_f1(self, att=None, excl=None):
 		'''
 		Micro F1
 		:param att: get f1 for specific attribute (exact match)
+		:param excl: get f1 for all but one specific attribute
 		'''
-		if att != None:
+		if att is not None:
 			return f1(self.correct.get(att, 0), self.gold.get(att, 0), self.observed.get(att, 0))
-		return f1(sum(self.correct.values()), sum(self.gold.values()), sum(self.observed.values()))
+		elif excl is not None:
+			return f1(sum([self.correct[att] for att in self.correct if att != excl]), sum([self.gold[att] for att in self.gold if att != excl]), sum([self.observed[att] for att in self.observed if att != excl]))
+		else:
+			return f1(sum(self.correct.values()), sum(self.gold.values()), sum(self.observed.values()))
 
-	def mac_f1(self, att = None):
+	def mac_f1(self, att=None, excl=None):
 		'''
 		Macro F1
 		:param att: only relevant in att_val mode, otherwise fails (use mic_f1)
+		:param excl: get f1 for all but one specific attribute
 		'''
 		all_keys = set().union(self.gold.keys(), self.observed.keys())
-		if att == None:
-			keys = all_keys
-		else:
+		if att is not None:
 			keys = [k for k in all_keys if k[0] == att]
+		elif excl is not None:
+			keys = [k for k in all_keys if k != excl]
+		else:
+			keys = all_keys
 		return average([f1(self.correct.get(k, 0), self.gold.get(k, 0), self.observed.get(k, 0)) for k in keys])
 
 	def acc(self):

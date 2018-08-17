@@ -8,7 +8,6 @@ import os, sys, argparse, csv, datetime, collections, itertools
 import random, pickle, progressbar, logging
 import dynet as dy
 import numpy as np
-import utils
 
 __author__ = "Yves Scherrer, 2018, based on code by Yuval Pinter and Robert Guthrie, 2017"
 
@@ -16,11 +15,72 @@ Instance = collections.namedtuple("Instance", ["w_sentence", "c_sentence", "tags
 
 UNK_TAG = "<UNK>"
 NONE_TAG = "<NONE>"
-START_TAG = "<START>"
-END_TAG = "<STOP>"
+#START_TAG = "<START>"
+#END_TAG = "<STOP>"
 UNK_CHAR_TAG = "<?>"
 PADDING_CHAR = "<*>"
 POS_KEY = "POS"
+
+
+def read_pretrained_embeddings(filename, w2i):
+	word_to_embed = {}
+	with open(filename, "r", encoding="utf-8") as f:
+		for line in f:
+			split = line.split()
+			if len(split) > 2:
+				word = split[0]
+				vec = split[1:]
+				word_to_embed[word] = vec
+	embedding_dim = len(word_to_embed[list(word_to_embed.keys())[0]])
+	out = np.random.uniform(-0.8, 0.8, (len(w2i), embedding_dim))
+	for word, embed in word_to_embed.items():
+		embed_arr = np.array(embed)
+		if np.linalg.norm(embed_arr) < 15.0 and word in w2i:
+			# Theres a reason for this if condition.  Some tokens in ptb
+			# cause numerical problems because they are long strings of the same punctuation, e.g
+			# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! which end up having huge norms, since Morfessor will
+			# segment it as a ton of ! and then the sum of these morpheme vectors is huge.
+			out[w2i[word]] = np.array(embed)
+	return out
+
+
+def split_tagstring(s, uni_key=False, has_pos=False):
+	'''
+	Returns attribute-value mapping from UD-type CONLL field
+	:param uni_key: if toggled, returns attribute-value pairs as joined strings (with the '=')
+	:param has_pos: input line segment includes POS tag label
+	'''
+	if has_pos:
+		s = s.split("\t")[1]
+	ret = [] if uni_key else {}
+	if "=" not in s: # incorrect format
+		return ret
+	for attval in s.split('|'):
+		attval = attval.strip()
+		if not uni_key:
+			a,v = attval.split('=')
+			ret[a] = v
+		else:
+			ret.append(attval)
+	return ret
+
+
+def map_tags(i2ts, tagdict):
+	tagstrdict = {}
+	for attr, seq in tagdict.items():
+		val = i2ts[attr][seq]
+		if val != NONE_TAG:
+			tagstrdict[attr] = val
+	return tagstrdict
+
+
+def morphdict2str(morphdict, keepPos=False):
+	l = ["{}={}".format(m, morphdict[m]) for m in morphdict if keepPos or (m != POS_KEY)]
+	if l == []:
+		return "_"
+	else:
+		return "|".join(sorted(l))
+
 
 def read_file(filename, w2i, t2is, c2i, vocab_counter, number_index=0, w_token_index=1, c_token_index=1, pos_index=3, morph_index=5, update_vocab=True):
 	"""
@@ -95,7 +155,7 @@ def read_file(filename, w2i, t2is, c2i, vocab_counter, number_index=0, w_token_i
 				else:
 					postag = NONE_TAG
 				if morph_index >= 0:
-					morphotags = utils.split_tagstring(data[morph_index], uni_key=False, has_pos=(pos_index == morph_index))
+					morphotags = split_tagstring(data[morph_index], uni_key=False, has_pos=(pos_index == morph_index))
 				else:
 					morphotags = {}
 
@@ -372,105 +432,96 @@ def get_att_prop(instances):
 
 
 def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab, no_eval_feats=[]):
+	bar = progressbar.ProgressBar()
 	model.disable_dropout()
 	loss = 0.0
-	correct = Counter()
-	total = Counter()
-	oov_total = Counter()
-	bar = progressbar.ProgressBar()
-	total_wrong = Counter()
-	total_wrong_oov = Counter()
-	f1_eval = Evaluator(m = 'att')
+	eval = Evaluator(m='att')
+	oov_eval = Evaluator(m='att')
 	display_eval = False
+	
 	if outfilename:
 		writer = open(outfilename, 'w', encoding='utf-8')
-
+	
 	for instance in bar(instances):
-		if instance.length == 0: continue
-		gold_tags = instance.tags
-		for att in model.attributes:
-			if att not in instance.tags:
-				gold_tags[att] = [t2is[att][NONE_TAG]] * instance.length
-		losses = model.loss(instance.w_sentence, instance.c_sentence, gold_tags)
-		total_loss = sum([l.scalar_value() for l in losses.values()])
-		out_tags_set = model.tag_sentence(instance.w_sentence, instance.c_sentence)
-
-		gold_strings = utils.morphotag_strings(i2ts, gold_tags)
-		obs_strings = utils.morphotag_strings(i2ts, out_tags_set)
-		for g, o in zip(gold_strings, obs_strings):
-			f1_eval.add_instance(utils.split_tagstring(g, has_pos=True, ignore=no_eval_feats), utils.split_tagstring(o, has_pos=True, ignore=no_eval_feats))
-		for att, tags in gold_tags.items():
+		# Instance(w_sentence, c_sentence, tags, length)
+		if instance.length == 0:
+			continue
+		predicted_tags = model.tag_sentence(instance.w_sentence, instance.c_sentence)
+		losses = model.loss(instance.w_sentence, instance.c_sentence, instance.tags)
+		total_loss = sum([l.scalar_value() for l in losses.values()]) / instance.length
+		loss += total_loss
+		
+		for i, (w_word, c_word) in enumerate(itertools.zip_longest(instance.w_sentence, instance.c_sentence)):
+			is_oov = True
+			if w_word and w_word in i2w and i2w[w_word] != UNK_TAG:
+				w_word_str = i2w[w_word]
+				is_oov = i2w[w_word] not in training_vocab
+			else:
+				w_word_str = UNK_TAG
+			
+			if c_word:
+				# regenerate output words from c_sentence, removing the padding characters
+				c_word_str = ("".join([i2c[c] for c in c_word])).replace(PADDING_CHAR, "")
+				is_oov = c_word_str not in training_vocab
+			else:
+				c_word_str = UNK_TAG
+			
+			gold_tags = map_tags(i2ts, {x: instance.tags[x][i] for x in instance.tags})
+			pred_tags = map_tags(i2ts, {x: predicted_tags[x][i] for x in predicted_tags})
 			# display the evaluation figures if we have ever seen a POS tag != NONE in the gold
-			if (not display_eval) and (att == POS_KEY) and any([t != t2is[POS_KEY][NONE_TAG] for t in tags]):
+			if (not display_eval) and (POS_KEY in gold_tags):
 				display_eval = True
-			out_tags = out_tags_set[att]
-			correct_sent = True
-
-			oov_strings = []
-			for w_word, c_word, gold, out in itertools.zip_longest(instance.w_sentence, instance.c_sentence, tags, out_tags):
-				if w_word and w_word in i2w:
-					is_oov = i2w[w_word] not in training_vocab
-				elif c_word:
-					c_word_str = ("".join([i2c[c] for c in c_word])).replace(PADDING_CHAR, "")
-					is_oov = c_word_str not in training_vocab
+			
+			eval_gold_tags = {x: gold_tags[x] for x in gold_tags if x not in no_eval_feats}
+			eval_pred_tags = {x: pred_tags[x] for x in pred_tags if x not in no_eval_feats}
+			eval.add_instance(eval_gold_tags, eval_pred_tags)
+			if is_oov:
+				oov_eval.add_instance(eval_gold_tags, eval_pred_tags)
+					
+			if writer:
+				line = []		# line = [word, pos, morph, oov]
+				if w_word_str != UNK_TAG:
+					line.append(w_word_str)
 				else:
-					is_oov = True
-				
-				if gold == out:
-					correct[att] += 1
-				else:
-					# Got the wrong tag
-					total_wrong[att] += 1
-					correct_sent = False
-					if is_oov:
-						total_wrong_oov[att] += 1
-
+					line.append(c_word_str)
+				line.append(pred_tags.get(POS_KEY, "_"))
+				line.append(morphdict2str(pred_tags))
 				if is_oov:
-					oov_total[att] += 1
-					oov_strings.append("OOV")
+					line.append("OOV")
 				else:
-					oov_strings.append("")
-
-			total[att] += len(tags)
-
-		loss += (total_loss / instance.length)
+					line.append("")
+				writer.write("\t".join(line) + "\n")
 		
 		if writer:
-			out_sentence = []
-			for w_word, c_word, gold, out, oov in itertools.zip_longest(instance.w_sentence, instance.c_sentence, gold_strings, obs_strings, oov_strings):
-				if w_word and w_word in i2w and i2w[w_word] != UNK_TAG:
-					word_str = i2w[w_word]
-				elif c_word:
-					# regenerate output words from c_sentence, removing the padding characters
-					word_str = ("".join([i2c[c] for c in c_word])).replace(PADDING_CHAR, "")
-				else:
-					word_str = UNK_TAG
-				out_sentence.append(word_str)
-			writer.write("\n".join(["\t".join(z) for z in zip(out_sentence, gold_strings, obs_strings, oov_strings)]) + "\n\n")
+			writer.write("\n")
 	
-	if writer: writer.close()
+	if writer:
+		writer.close()
 	loss = loss / len(instances)
-
+				
 	# log results
-	logging.info("Number of instances: {}".format(len(instances)))
+	logging.info("")
+	logging.info("{} instances".format(len(instances)))
+	logging.info("{} tokens".format(eval.instance_count))
+	logging.info("{} OOV tokens ({:.2f}%)".format(oov_eval.instance_count, 100 * oov_eval.instance_count / eval.instance_count))
+	
 	if display_eval:
-		logging.info("POS Accuracy: {}".format(correct[POS_KEY] / total[POS_KEY]))
-		logging.info("POS % OOV accuracy: {}".format((oov_total[POS_KEY] - total_wrong_oov[POS_KEY]) / oov_total[POS_KEY]))
-		if total_wrong[POS_KEY] > 0:
-			logging.info("POS % Wrong that are OOV: {}".format(total_wrong_oov[POS_KEY] / total_wrong[POS_KEY]))
+		logging.info("")
+		logging.info("Feature\tOverall F1\tOOV F1")
+		logging.info("POS\t{:.2f}%\t{:.2f}%".format(100*eval.mic_f1(att=POS_KEY), 100*oov_eval.mic_f1(att=POS_KEY)))
 		for attr in model.attributes:
-			if attr in no_eval_feats:
+			if (attr == POS_KEY) or (attr in no_eval_feats):
 				continue
-			if attr != POS_KEY:
-				logging.info("{} F1: {}".format(attr, f1_eval.mic_f1(att = attr)))
-		logging.info("Total attribute F1s: {} micro, {} macro, POS included = {}".format(f1_eval.mic_f1(), f1_eval.mac_f1(), False))
+			logging.info("{}\t{:.2f}%\t{:.2f}%".format(attr, 100*eval.mic_f1(att=attr), 100*oov_eval.mic_f1(att=attr)))
+		logging.info("Total Micro F1 (including POS)\t{:.2f}%\t{:.2f}%".format(100*eval.mic_f1(), 100*oov_eval.mic_f1()))
+		logging.info("Total Micro F1 (excluding POS)\t{:.2f}%\t{:.2f}%".format(100*eval.mic_f1(excl=POS_KEY), 100*oov_eval.mic_f1(excl=POS_KEY)))
+		logging.info("Total Macro F1 (including POS)\t{:.2f}%\t{:.2f}%".format(100*eval.mac_f1(), 100*oov_eval.mac_f1()))
+		logging.info("Total Macro F1 (excluding POS)\t{:.2f}%\t{:.2f}%".format(100*eval.mac_f1(excl=POS_KEY), 100*oov_eval.mac_f1(excl=POS_KEY)))
 	else:
 		logging.info("Evaluation measures not available (no gold tags in file)")
-
-	logging.info("Total tokens: {}, Total OOV: {}, % OOV: {}".format(total[POS_KEY], oov_total[POS_KEY], oov_total[POS_KEY] / total[POS_KEY]))
+	
 	logging.info("")
 	return loss
-
 
 
 if __name__ == "__main__":
@@ -563,7 +614,7 @@ if __name__ == "__main__":
 	
 	if options.vocab:
 		if not os.path.exists(options.vocab):
-			logging.error("Vocabulary file does not exist at specified location: {}".format(options.options.vocab))
+			logging.error("Vocabulary file does not exist at specified location: {}".format(options.vocab))
 			sys.exit(1)
 		else:
 			logging.info("Load pickled vocabulary from {}".format(options.vocab))
@@ -623,9 +674,9 @@ if __name__ == "__main__":
 						break
 			
 			# Add special tags to dicts
-			for t2i in t2is.values():
-				t2i[START_TAG] = len(t2i)
-				t2i[END_TAG] = len(t2i)
+			# for t2i in t2is.values():
+				# t2i[START_TAG] = len(t2i)
+				# t2i[END_TAG] = len(t2i)
 			
 			logging.info("Training data loaded: {} instances, {} vocabulary items, {} stored vocabulary items, {} characters, {} tag keys".format(len(training_instances), len(training_vocab), len(w2i), len(c2i), len(t2is)))		
 			
@@ -682,7 +733,7 @@ if __name__ == "__main__":
 	
 	if training_vocab:
 		# Inverse vocabulary mapping
-		i2w = { i: w for w, i in w2i.items() } # Inverse mapping
+		i2w = { i: w for w, i in w2i.items() }
 		i2ts = { att: {i: t for t, i in t2i.items()} for att, t2i in t2is.items() }
 		i2c = { i: c for c, i in c2i.items() }
 		
@@ -720,7 +771,7 @@ if __name__ == "__main__":
 		tag_set_sizes = { att: len(t2i) for att, t2i in t2is.items() }
 		
 		if options.word_pretrained_embeddings:
-			word_embeddings = utils.read_pretrained_embeddings(options.word_pretrained_embeddings, w2i)
+			word_embeddings = read_pretrained_embeddings(options.word_pretrained_embeddings, w2i)
 			logging.info("Using pretrained embeddings from file {}".format(options.word_pretrained_embeddings))
 		else:
 			word_embeddings = None
