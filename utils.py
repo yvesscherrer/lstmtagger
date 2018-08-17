@@ -26,7 +26,7 @@ def read_pretrained_embeddings(filename, w2i):
 	return out
 
 
-def split_tagstring(s, uni_key=False, has_pos=False):
+def split_tagstring(s, uni_key=False, has_pos=False, ignore=[]):
 	'''
 	Returns attribute-value mapping from UD-type CONLL field
 	:param uni_key: if toggled, returns attribute-value pairs as joined strings (with the '=')
@@ -41,13 +41,15 @@ def split_tagstring(s, uni_key=False, has_pos=False):
 		attval = attval.strip()
 		if not uni_key:
 			a,v = attval.split('=')
-			ret[a] = v
+			if a not in ignore:
+				ret[a] = v
 		else:
-			ret.append(attval)
+			if attval.split('=')[0] not in ignore:
+				ret.append(attval)
 	return ret
 
 
-def morphotag_strings(i2ts, tag_mapping, pos_separate_col=True, ignore=[]):
+def morphotag_strings(i2ts, tag_mapping, pos_separate_col=True):
 	senlen = len(list(tag_mapping.values())[0])
 	key_value_strs = []
 
@@ -56,8 +58,6 @@ def morphotag_strings(i2ts, tag_mapping, pos_separate_col=True, ignore=[]):
 	for j in range(senlen):
 		place_strs = []
 		for att, seq in tag_mapping.items():
-			if att in ignore:
-				continue
 			if j >= len(seq):
 				print("Accessing inexistent index: attribute {}, position {}, sequence {}".format(att, j, str(tag_mapping.items())))
 				val = NONE_TAG

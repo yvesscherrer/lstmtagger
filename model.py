@@ -389,21 +389,17 @@ def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab
 		if instance.length == 0: continue
 		gold_tags = instance.tags
 		for att in model.attributes:
-			if att in no_eval_feats:
-				continue
 			if att not in instance.tags:
 				gold_tags[att] = [t2is[att][NONE_TAG]] * instance.length
 		losses = model.loss(instance.w_sentence, instance.c_sentence, gold_tags)
 		total_loss = sum([l.scalar_value() for l in losses.values()])
 		out_tags_set = model.tag_sentence(instance.w_sentence, instance.c_sentence)
 
-		gold_strings = utils.morphotag_strings(i2ts, gold_tags, ignore=no_eval_feats)
-		obs_strings = utils.morphotag_strings(i2ts, out_tags_set, ignore=no_eval_feats)
+		gold_strings = utils.morphotag_strings(i2ts, gold_tags)
+		obs_strings = utils.morphotag_strings(i2ts, out_tags_set)
 		for g, o in zip(gold_strings, obs_strings):
-			f1_eval.add_instance(utils.split_tagstring(g, has_pos=True), utils.split_tagstring(o, has_pos=True))
+			f1_eval.add_instance(utils.split_tagstring(g, has_pos=True, ignore=no_eval_feats), utils.split_tagstring(o, has_pos=True, ignore=no_eval_feats))
 		for att, tags in gold_tags.items():
-			if att in no_eval_feats:
-				continue
 			# display the evaluation figures if we have ever seen a POS tag != NONE in the gold
 			if (not display_eval) and (att == POS_KEY) and any([t != t2is[POS_KEY][NONE_TAG] for t in tags]):
 				display_eval = True
