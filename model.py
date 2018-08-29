@@ -202,7 +202,7 @@ def read_file(filename, w2i, t2is, c2i, vocab_counter, number_index=0, w_token_i
 					# pad backwards to latest seen
 					missing_tags = idx - len(mtags) - 1
 					mtags.extend([0] * missing_tags) # 0 guaranteed above to represent NONE_TAG
-					mtags.append(t2is[k].get(v, NONE_TAG))
+					mtags.append(t2is[k].get(v, t2is[k][NONE_TAG]))
 					
 		# last sentence
 		# pad tag lists to sentence end
