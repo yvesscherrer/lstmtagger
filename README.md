@@ -11,34 +11,28 @@ git clone https://github.com/yvesscherrer/lstmtagger.git
 
 # Basic usage
 
+Training a model:
+
 ```
 python3 model.py \
     --log-dir exp1 \
     --training-data pl-ud-train.conllu \
     --dev-data pl-ud-dev.conllu \
     --num-epochs 20 \
-    --test-data pl-ud-test.conllu \
-    --test-data-out testout.txt
+	--vocab-save exp1/vocab.pkl \
+    --settings-save exp1/settings.pkl \
+    --params-save exp1/params.bin
 ```
 
 This command:
 
 * Creates a directory `exp1` where log files and model files are stored
-* Trains a tagger on the file `pl-ud-train.conllu` (files are assumed to be in CoNLL-U format, as on universaldependencies.org)
+* Trains a tagger on the file `pl-ud-train.conllu` (files are assumed to be in CoNLL-U format, as on [Universal Dependencies](https://universaldependencies.org) )
 * Evaluates the model periodically on the file `pl-ud-dev.conllu`
 * Stops training after 20 epochs
-* Tags the file `pl-ud-test.conllu`
-* Writes the tagged output to file `testout.txt`
+* Writes the model parameters to `exp1/vocab.pkl`, `exp1/settings.pkl` and `exp1/params.bin`
 
-The above command does not save the trained model. This can be achieved by adding the following parameters:
-
-```
-    --vocab-save exp1/vocab.pkl \
-    --settings-save exp1/settings.pkl \
-    --params-save exp1/params.bin \
-```
-
-An existing model can then be reloaded for tagging as follows:
+A trained model can then be loaded to tag new files as follows:
 
 ```
 python3 model.py \
