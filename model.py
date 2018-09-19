@@ -258,7 +258,6 @@ class LSTMTagger:
 				word_set_size = word_pretrained_embeddings.shape[0]
 				word_embedding_dim = word_pretrained_embeddings.shape[1]
 				logging.info("Use pretrained embeddings: setting vocabulary size to {} and dimensions to {}".format(word_set_size, word_embedding_dim))
-			#self.word_lookup = self.model.add_lookup_parameters((word_set_size, word_embedding_dim), name=b"we")
 			self.word_lookup = self.model.add_lookup_parameters((word_set_size, word_embedding_dim))
 			if word_pretrained_embeddings is not None:
 				self.word_lookup.init_from_array(word_pretrained_embeddings)
@@ -266,7 +265,6 @@ class LSTMTagger:
 			tag_input_dim += word_embedding_dim
 
 		if self.use_char_lstm:
-			#self.char_lookup = self.model.add_lookup_parameters((char_set_size, char_embedding_dim), name=b"ce")
 			self.char_lookup = self.model.add_lookup_parameters((char_set_size, char_embedding_dim))
 			self.char_bi_lstm = dy.BiRNNBuilder(char_num_layers, char_embedding_dim, char_hidden_dim, self.model, dy.LSTMBuilder)
 			tag_input_dim += char_hidden_dim
@@ -280,10 +278,6 @@ class LSTMTagger:
 		self.mlp_out_bias = {}
 		for att in self.attributes:	# need to be in consistent order for saving and loading
 			set_size = tag_set_sizes[att]
-			# self.lstm_to_tags_params[att] = self.model.add_parameters((set_size, tag_hidden_dim), name=bytes(att+"H", 'utf-8'))
-			# self.lstm_to_tags_bias[att] = self.model.add_parameters(set_size, name=bytes(att+"Hb", 'utf-8'))
-			# self.mlp_out[att] = self.model.add_parameters((set_size, set_size), name=bytes(att+"O", 'utf-8'))
-			# self.mlp_out_bias[att] = self.model.add_parameters(set_size, name=bytes(att+"Ob", 'utf-8'))
 			self.lstm_to_tags_params[att] = self.model.add_parameters((set_size, tag_hidden_dim))
 			self.lstm_to_tags_bias[att] = self.model.add_parameters(set_size)
 			self.mlp_out[att] = self.model.add_parameters((set_size, set_size))
