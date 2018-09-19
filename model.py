@@ -445,6 +445,8 @@ def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab
 	
 	if outfilename:
 		writer = open(outfilename, 'w', encoding='utf-8')
+	else:
+		writer = None
 	
 	for instance in bar(instances):
 		# Instance(w_sentence, c_sentence, tags, length)
@@ -577,7 +579,7 @@ if __name__ == "__main__":
 	parser.add_argument("--tag-hidden-dim", default=256, dest="tag_hidden_dim", type=int, help="Size of tagger LSTM hidden layers (default: 256)")
 	parser.add_argument("--learning-rate", default=0.01, dest="learning_rate", type=float, help="Initial learning rate (default: 0.01)")
 	parser.add_argument("--decay", default=0.1, dest="decay", type=float, help="Learning rate decay (default: 0.1, 0 to turn off)")
-	parser.add_argument("--dropout", default=0.02, dest="dropout", type=float, help="Amount of dropout to apply to LSTM parts of graph (default: 02, -1 to turn off)")
+	parser.add_argument("--dropout", default=0.02, dest="dropout", type=float, help="Amount of dropout to apply to LSTM parts of graph (default: 0.02, -1 to turn off)")
 	parser.add_argument("--loss-prop", dest="loss_prop", action="store_true", help="Proportional loss magnitudes")
 	
 	# other
