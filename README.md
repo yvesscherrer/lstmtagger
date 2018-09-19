@@ -19,7 +19,7 @@ python3 model.py \
     --training-data pl-ud-train.conllu \
     --dev-data pl-ud-dev.conllu \
     --num-epochs 20 \
-	--vocab-save exp1/vocab.pkl \
+    --vocab-save exp1/vocab.pkl \
     --settings-save exp1/settings.pkl \
     --params-save exp1/params.bin
 ```
