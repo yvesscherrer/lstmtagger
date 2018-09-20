@@ -16,8 +16,8 @@ Training a model:
 ```
 python3 model.py \
     --log-dir exp1 \
-    --training-data pl-ud-train.conllu \
-    --dev-data pl-ud-dev.conllu \
+    --training-data uk_iu-ud-train.conllu \
+    --dev-data uk_iu-ud-dev.conllu \
     --num-epochs 20 \
     --vocab-save exp1/vocab.pkl \
     --settings-save exp1/settings.pkl \
@@ -40,7 +40,7 @@ python3 model.py \
     --vocab exp1/vocab.pkl \
     --settings exp1/settings.pkl \
     --params exp1/params.bin \
-    --test-data pl-ud-test.conllu \
+    --test-data uk_iu-ud-test.conllu \
     --test-data-out testout.txt
 ```
 
