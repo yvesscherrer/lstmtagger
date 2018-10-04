@@ -275,7 +275,6 @@ class LSTMTagger:
 				word_set_size = word_pretrained_embeddings.shape[0]
 				word_embedding_dim = word_pretrained_embeddings.shape[1]
 				logging.info("Use pretrained embeddings: setting vocabulary size to {} and dimensions to {}".format(word_set_size, word_embedding_dim))
-			#self.word_lookup = self.model.add_lookup_parameters((word_set_size, word_embedding_dim), name=b"we")
 			self.word_lookup = self.model.add_lookup_parameters((word_set_size, word_embedding_dim))
 			if word_pretrained_embeddings is not None:
 				self.word_lookup.init_from_array(word_pretrained_embeddings)
@@ -283,7 +282,6 @@ class LSTMTagger:
 			tag_input_dim += word_embedding_dim
 
 		if self.use_char_lstm:
-			#self.char_lookup = self.model.add_lookup_parameters((char_set_size, char_embedding_dim), name=b"ce")
 			self.char_lookup = self.model.add_lookup_parameters((char_set_size, char_embedding_dim))
 			self.char_bi_lstm = dy.BiRNNBuilder(char_num_layers, char_embedding_dim, char_hidden_dim, self.model, dy.LSTMBuilder)
 			tag_input_dim += char_hidden_dim
@@ -297,10 +295,6 @@ class LSTMTagger:
 		self.mlp_out_bias = {}
 		for att in self.attributes:	# need to be in consistent order for saving and loading
 			set_size = tag_set_sizes[att]
-			# self.lstm_to_tags_params[att] = self.model.add_parameters((set_size, tag_hidden_dim), name=bytes(att+"H", 'utf-8'))
-			# self.lstm_to_tags_bias[att] = self.model.add_parameters(set_size, name=bytes(att+"Hb", 'utf-8'))
-			# self.mlp_out[att] = self.model.add_parameters((set_size, set_size), name=bytes(att+"O", 'utf-8'))
-			# self.mlp_out_bias[att] = self.model.add_parameters(set_size, name=bytes(att+"Ob", 'utf-8'))
 			self.lstm_to_tags_params[att] = self.model.add_parameters((set_size, tag_hidden_dim))
 			self.lstm_to_tags_bias[att] = self.model.add_parameters(set_size)
 			self.mlp_out[att] = self.model.add_parameters((set_size, set_size))
@@ -462,6 +456,8 @@ def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab
 	
 	if outfilename:
 		writer = open(outfilename, 'w', encoding='utf-8')
+	else:
+		writer = None
 	
 	for instance in bar(instances):
 		# Instance(w_sentence, c_sentence, tags, length)
@@ -599,7 +595,7 @@ if __name__ == "__main__":
 	parser.add_argument("--tag-hidden-dim", default=256, dest="tag_hidden_dim", type=int, help="Size of tagger LSTM hidden layers (default: 256)")
 	parser.add_argument("--learning-rate", default=0.01, dest="learning_rate", type=float, help="Initial learning rate (default: 0.01)")
 	parser.add_argument("--decay", default=0.1, dest="decay", type=float, help="Learning rate decay (default: 0.1, 0 to turn off)")
-	parser.add_argument("--dropout", default=0.02, dest="dropout", type=float, help="Amount of dropout to apply to LSTM parts of graph (default: 02, -1 to turn off)")
+	parser.add_argument("--dropout", default=0.02, dest="dropout", type=float, help="Amount of dropout to apply to LSTM parts of graph (default: 0.02, -1 to turn off)")
 	parser.add_argument("--loss-prop", dest="loss_prop", action="store_true", help="Proportional loss magnitudes")
 	
 	# other
