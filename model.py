@@ -63,21 +63,38 @@ def split_tagstring(s, uni_key=False, has_pos=False):
 	return ret
 
 
-def map_tags(i2ts, tagdict):
+def map_tags(i2ts, tagdict, has_prob=False):
 	tagstrdict = {}
 	for attr, seq in tagdict.items():
-		val = i2ts[attr][seq]
-		if val != NONE_TAG:
-			tagstrdict[attr] = val
+		if has_prob:
+			seq, prob = seq
+			val = i2ts[attr][seq]
+			if val != NONE_TAG:
+				tagstrdict[attr] = (val, prob)
+		else:
+			val = i2ts[attr][seq]
+			if val != NONE_TAG:
+				tagstrdict[attr] = val
 	return tagstrdict
 
 
 def morphdict2str(morphdict, keepPos=False):
-	l = ["{}={}".format(m, morphdict[m]) for m in morphdict if keepPos or (m != POS_KEY)]
+	l = sorted(["{}={}".format(m, morphdict[m]) for m in morphdict if m != POS_KEY])
+	if keepPos:
+		l = ["{}={}".format(POS_KEY, morphdict[POS_KEY])] + l
 	if l == []:
 		return "_"
 	else:
-		return "|".join(sorted(l))
+		return "|".join(l)
+
+def probdict2str(probdict, keepPos=False):
+	l = sorted(["{}={:.3f}".format(m, probdict[m]) for m in probdict if m != POS_KEY])
+	if keepPos:
+		l = ["{}={:.3f}".format(POS_KEY, probdict[POS_KEY])] + l
+	if l == []:
+		return ""
+	else:
+		return "|".join(l)
 
 
 def read_file(filename, w2i, t2is, c2i, vocab_counter, number_index=0, w_token_index=1, c_token_index=1, pos_index=3, morph_index=5, update_vocab=True):
@@ -403,7 +420,7 @@ class LSTMTagger:
 			tag_seq = []
 			for prob in probs:
 				tag_t = np.argmax(prob)
-				tag_seq.append(tag_t)
+				tag_seq.append((tag_t, prob[tag_t]))
 			tag_seqs[att] = tag_seq
 		return tag_seqs
 
@@ -435,7 +452,7 @@ def get_att_prop(instances):
 	return {att:(1.0 - (att_counts[att] / total_tokens)) for att in att_counts}
 
 
-def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab, no_eval_feats=[]):
+def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab, no_eval_feats=[], add_probs=False):
 	bar = progressbar.ProgressBar()
 	model.disable_dropout()
 	loss = 0.0
@@ -471,17 +488,19 @@ def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab
 				c_word_str = UNK_TAG
 			
 			gold_tags = map_tags(i2ts, {x: instance.tags[x][i] for x in instance.tags})
-			pred_tags = map_tags(i2ts, {x: predicted_tags[x][i] for x in predicted_tags})
-			# display the evaluation figures if we have ever seen a POS tag != NONE in the gold
-			if (not display_eval) and (POS_KEY in gold_tags):
-				display_eval = True
-			
+			pred_tags_probs = map_tags(i2ts, {x: predicted_tags[x][i] for x in predicted_tags}, has_prob=True)
+			pred_tags = {x: pred_tags_probs[x][0] for x in pred_tags_probs}
+			if add_probs:
+				pred_probs = {x: pred_tags_probs[x][1] for x in pred_tags_probs}
 			eval_gold_tags = {x: gold_tags[x] for x in gold_tags if x not in no_eval_feats}
 			eval_pred_tags = {x: pred_tags[x] for x in pred_tags if x not in no_eval_feats}
 			eval.add_instance(eval_gold_tags, eval_pred_tags)
 			if is_oov:
 				oov_eval.add_instance(eval_gold_tags, eval_pred_tags)
-					
+			# display the evaluation figures if we have ever seen a POS tag != NONE in the gold
+			if (not display_eval) and (POS_KEY in gold_tags):
+				display_eval = True
+			
 			if writer:
 				line = []		# line = [word, pos, morph, oov]
 				if w_word_str != UNK_TAG:
@@ -494,6 +513,8 @@ def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab
 					line.append("OOV")
 				else:
 					line.append("")
+				if add_probs:
+					line.append(probdict2str(pred_probs, keepPos=True))
 				writer.write("\t".join(line) + "\n")
 		
 		if writer:
@@ -560,6 +581,7 @@ if __name__ == "__main__":
 	parser.add_argument("--pos-index", dest="pos_index", type=int, help="Field in which the main POS is stored (default, UD tags: 3) (original non-UD tag: 4)", default=3)
 	parser.add_argument("--morph-index", dest="morph_index", type=int, help="Field in which the morphology tags are stored (default: 5); use negative value if morphosyntactic tags should not be considered", default=5)
 	parser.add_argument("--no-eval-feats", dest="no_eval_feats", type=str, help="(Comma-separated) list of morphological features that should be ignored during evaluation; typically used for additional tasks in multitask settings", default="")
+	parser.add_argument("--add-probs", dest="add_probs", action="store_true", help="Write prediction probabilities to output files")
 	
 	# Options for easily reducing the size of the training data
 	parser.add_argument("--training-sentence-size", default=sys.maxsize, dest="training_sentence_size", type=int, help="Instance count of training set (default: unlimited)")
@@ -860,7 +882,7 @@ if __name__ == "__main__":
 					devout_filename = None
 				
 				logging.info("Evaluate dev data")
-				dev_loss = evaluate(model, dev_instances, devout_filename, t2is, i2ts, i2w, i2c, training_vocab, options.no_eval_feats)
+				dev_loss = evaluate(model, dev_instances, devout_filename, t2is, i2ts, i2w, i2c, training_vocab, options.no_eval_feats, options.add_probs)
 				logging.info("Dev Loss: {}".format(dev_loss))
 				
 				# remove output of previous epoch if (a) there is output and we're not in the first epoch, and (b1) we don't want to save anything, or (b2) it is not the second epoch and it is not one of the epochs we want to save
@@ -933,7 +955,7 @@ if __name__ == "__main__":
 		
 		if model:
 			logging.info("Evaluate test data")
-			evaluate(model, test_instances, options.test_data_out, t2is, i2ts, i2w, i2c, training_vocab, options.no_eval_feats)
+			evaluate(model, test_instances, options.test_data_out, t2is, i2ts, i2w, i2c, training_vocab, options.no_eval_feats, options.add_probs)
 	
 	else:
 		logging.info("No test data provided")
