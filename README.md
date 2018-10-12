@@ -88,7 +88,7 @@ python3 model.py \
 `--char-hidden-dim`	Size of character LSTM hidden layers (default: 256)  
 `--word-emb-dim`	Size of word embedding layer (ignored if pre-trained word embeddings are loaded, use 0 to disable word embeddings)  
 `--pretrained-embeddings`	File from which to read in pretrained embeddings (if not supplied, will be random)  
-`--word-update-emb`	Update word embeddings during training (default: off, but always on if not using pretrained embeddings)  
+`--fix-embeddings`	Do not update word embeddings during training (default: off, only makes sense with pretrained embeddings)
 `--tag-num-layers`	Number of tagger LSTM layers (default: 2)  
 `--tag-hidden-dim`	Size of tagger LSTM hidden layers (default: 256)  
 `--learning-rate`	Initial learning rate (default: 0.01)  

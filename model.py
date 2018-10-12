@@ -590,7 +590,7 @@ if __name__ == "__main__":
 	parser.add_argument("--char-hidden-dim", default=256, dest="char_hidden_dim", type=int, help="Size of character LSTM hidden layers (default: 256)")
 	parser.add_argument("--word-emb-dim", default=256, dest="word_embedding_dim", type=int, help="Size of word embedding layer (ignored if pre-trained word embeddings are loaded, use 0 to disable word embeddings)")
 	parser.add_argument("--pretrained-embeddings", dest="word_pretrained_embeddings", default=None, help="File from which to read in pretrained embeddings (if not supplied, will be random)")
-	parser.add_argument("--word-update-emb", dest="word_update_emb", action="store_true", help="Update word embeddings during training (default: off, but always on if not using pretrained embeddings")
+	parser.add_argument("--fix-embeddings", dest="fix_embeddings", action="store_true", help="Do not update word embeddings during training (default: off, only makes sense with pretrained embeddings)")
 	parser.add_argument("--tag-num-layers", default=2, dest="tag_num_layers", type=int, help="Number of tagger LSTM layers (default: 2)")
 	parser.add_argument("--tag-hidden-dim", default=256, dest="tag_hidden_dim", type=int, help="Size of tagger LSTM hidden layers (default: 256)")
 	parser.add_argument("--learning-rate", default=0.01, dest="learning_rate", type=float, help="Initial learning rate (default: 0.01)")
@@ -627,9 +627,9 @@ if __name__ == "__main__":
 	if options.w_token_index < 0 and options.word_embedding_dim > 0:
 		logging.info("Setting word_embedding_dim from {} to -1 because w_token_index is set to {}".format(options.word_embedding_dim, options.w_token_index))
 		options.word_embedding_dim = -1
-	if options.word_embedding_dim > 0 and options.word_pretrained_embeddings is None and not options.word_update_emb:
-		logging.info("Setting word_update_emb to True because word_embedding_dim is set to {} and word_pretrained_embeddings is not given".format(options.word_embedding_dim))
-		options.word_update_emb = True
+	# if options.word_embedding_dim > 0 and options.word_pretrained_embeddings is None and not options.word_update_emb:
+		# logging.info("Setting word_update_emb to True because word_embedding_dim is set to {} and word_pretrained_embeddings is not given".format(options.word_embedding_dim))
+		# options.word_update_emb = True
 	options.no_eval_feats = options.no_eval_feats.strip().split(",")
 	if options.no_eval_feats != []:
 		logging.info("Disregard the following features in evaluation: {}".format(",".join(options.no_eval_feats)))
@@ -802,7 +802,7 @@ if __name__ == "__main__":
 							word_pretrained_embeddings = word_embeddings,
 							word_set_size = len(w2i),
 							word_embedding_dim = options.word_embedding_dim,
-							word_update_emb = options.word_update_emb,
+							word_update_emb = not options.fix_embeddings,
 							tag_num_layers = options.tag_num_layers,
 							tag_hidden_dim = options.tag_hidden_dim,
 							tag_set_sizes = tag_set_sizes,
