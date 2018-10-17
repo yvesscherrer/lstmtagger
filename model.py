@@ -20,9 +20,9 @@ PADDING_CHAR = "<*>"
 POS_KEY = "POS"
 
 
-def read_pretrained_embeddings(filename, w2i):
-	embeddings = None
-	updates = 0
+def read_pretrained_embeddings(filename, w2i, update_vocab=True):
+	tmp_embeddings = {}
+	updated_words, new_words = 0, 0
 	with open(filename, "r", encoding="utf-8") as f:
 		for line in f:
 			split = line.split()
@@ -30,18 +30,25 @@ def read_pretrained_embeddings(filename, w2i):
 				word = split[0]
 				try:
 					vec = np.array(split[1:], dtype="float")
-					if embeddings is None:	# create embeddings vector after seeing the first example, determining the nb of dimensions
-						embedding_dim = len(vec)
-						embeddings = np.random.uniform(-0.8, 0.8, (len(w2i), embedding_dim))
-					if word in w2i and np.linalg.norm(vec) < 15.0:
-						# There's a reason for this if condition.  Some tokens in ptb cause numerical problems because they 
-						# are long strings of the same punctuation, e.g !!!!!!!!!!!!!!!!!!!!!!! which end up having huge norms,
-						# since Morfessor will segment it as a ton of ! and then the sum of these morpheme vectors is huge.
-						embeddings[w2i[word]] = vec
-						updates += 1
+					if word in w2i:
+						tmp_embeddings[word] = vec
+						updated_words += 1
+					elif update_vocab:
+						w2i[word] = len(w2i)
+						tmp_embeddings[word] = vec
+						new_words += 1
 				except ValueError:
 					logging.info("Skip embedding starting with '{}'".format(" ".join(split[:4])))
-	logging.info("{} out of {} vocabulary items associated with pretrained embeddings".format(updates, len(w2i)))
+	
+	# the proper embeddings vector can only be created now that we know the size of the vocabulary
+	embeddings = np.random.uniform(-0.8, 0.8, (len(w2i), len(vec)))
+	for word, vec in tmp_embeddings.items():
+		if np.linalg.norm(vec) >= 15.0:		# this condition was there since the beginning - not sure if this is still relevant
+			logging.info("Skip embedding of word '{}', norm >= 15".format(word))
+			continue
+		embeddings[w2i[word]] = vec
+	
+	logging.info("{}/{} vocabulary items associated with pretrained embeddings, {}/{} vocabulary items newly added".format(updated_words, len(w2i), new_words, len(w2i)))
 	return embeddings
 
 
@@ -720,6 +727,15 @@ if __name__ == "__main__":
 			with open(options.vocab_save, "wb") as outfile:
 				pickle.dump(vocab, outfile)
 	
+	# need to be loaded before dev data
+	if options.word_pretrained_embeddings:
+		if not w2i:
+			w2i = {UNK_TAG: 0}
+		logging.info("Using pretrained embeddings from file {}".format(options.word_pretrained_embeddings))
+		word_embeddings = read_pretrained_embeddings(options.word_pretrained_embeddings, w2i, update_vocab=True)
+	else:
+		word_embeddings = None
+	
 	if options.dev_data:
 		if not os.path.exists(options.dev_data):
 			logging.error("Dev data does not exist at specified location: {}".format(options.dev_data))
@@ -793,12 +809,6 @@ if __name__ == "__main__":
 	else:
 		logging.info("Create new model")
 		tag_set_sizes = { att: len(t2i) for att, t2i in t2is.items() }
-		
-		if options.word_pretrained_embeddings:
-			word_embeddings = read_pretrained_embeddings(options.word_pretrained_embeddings, w2i)
-			logging.info("Using pretrained embeddings from file {}".format(options.word_pretrained_embeddings))
-		else:
-			word_embeddings = None
 		
 		if options.loss_prop:
 			att_props = get_att_prop(training_instances)
