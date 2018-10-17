@@ -100,10 +100,10 @@ def probdict2str(probdict, keepPos=False):
 		return "|".join(l)
 
 
-def read_file(filename, w2i, t2is, c2i, vocab_counter, number_index=0, w_token_index=1, c_token_index=1, pos_index=3, morph_index=5, update_vocab=True):
+def read_file(filename, w2i, t2is, c2i, c_vocab, number_index=0, w_token_index=1, c_token_index=1, pos_index=3, morph_index=5, update_vocab=True):
 	"""
 	Read in a dataset and turn it into a list of instances.
-	Modifies the w2i, t2is and c2i dicts, adding new words/attributes/tags/chars
+	Modifies the w2i, t2is, c2i and c_vocab dicts, adding new words/attributes/tags/chars
 	as it sees them.
 	w_token_index: field in which the token representation used for the word embeddings is stored (ignored if < 0)
 	c_token_index: field in which the token representation used for the character embeddings is stored (ignored if < 0)
@@ -178,17 +178,12 @@ def read_file(filename, w2i, t2is, c2i, vocab_counter, number_index=0, w_token_i
 					morphotags = {}
 
 				if update_vocab:
-					# ensure counts and dictionary population
-					if w_word is not None:
-						vocab_counter[w_word] += 1
-					else:
-						vocab_counter[c_word] += 1
-				
 					if w_word is not None:
 						if w_word not in w2i:
 							w2i[w_word] = len(w2i)
 					
 					if c_word is not None:
+						c_vocab.add(c_word)
 						for c in c_word:
 							if c not in c2i:
 								c2i[c] = len(c2i)
@@ -453,7 +448,7 @@ def get_att_prop(instances):
 	return {att:(1.0 - (att_counts[att] / total_tokens)) for att in att_counts}
 
 
-def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab, no_eval_feats=[], add_probs=False):
+def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, c_vocab, no_eval_feats=[], add_probs=False):
 	bar = progressbar.ProgressBar()
 	model.disable_dropout()
 	loss = 0.0
@@ -480,14 +475,15 @@ def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab
 
 			if w_word and w_word in i2w and i2w[w_word] != UNK_TAG:
 				w_word_str = i2w[w_word]
-				is_oov = w_word_str not in training_vocab
+				is_oov = False
 			else:
 				w_word_str = UNK_TAG
 			
 			if c_word:
 				# regenerate output words from c_sentence, removing the padding characters
 				c_word_str = ("".join([i2c[c] for c in c_word])).replace(PADDING_CHAR, "")
-				is_oov = c_word_str not in training_vocab
+				if c_word_str in c_vocab:
+					is_oov = False
 			else:
 				c_word_str = UNK_TAG
 
@@ -589,7 +585,7 @@ if __name__ == "__main__":
 	
 	# Options for easily reducing the size of the training data
 	parser.add_argument("--training-sentence-size", default=sys.maxsize, dest="training_sentence_size", type=int, help="Instance count of training set (default: unlimited)")
-	parser.add_argument("--training-token-size", default=sys.maxsize, dest="training_token_size", type=int, help="Token count of training set (default: unlimited)")
+	# parser.add_argument("--training-token-size", default=sys.maxsize, dest="training_token_size", type=int, help="Token count of training set (default: unlimited)")
 
 	# Model settings
 	parser.add_argument("--num-epochs", default=40, dest="num_epochs", type=int, help="Number of full passes through training set (default: 40; disable training by setting --num-epochs to negative value)")
@@ -646,12 +642,23 @@ if __name__ == "__main__":
 		else:
 			logging.info("Load pickled vocabulary from {}".format(options.vocab))
 			vocab_dataset = pickle.load(open(options.vocab, "rb"))
-			training_vocab = vocab_dataset["training_vocab"]
 			w2i = vocab_dataset["w2i"]
 			t2is = vocab_dataset["t2is"]
 			c2i = vocab_dataset["c2i"]
+			# if is for backwards compatibility reason
+			if "c_vocab" in vocab_dataset:
+				c_vocab = vocab_dataset["c_vocab"]
+			elif "training_vocab" in vocab_dataset:
+				logging.info("Converting training_vocab to c_vocab - OOV counts may be inaccurate")
+				c_vocab = set(vocab_dataset["training_vocab"].keys())
+			else:
+				logging.info("c_vocab not found (old model) - OOV counts may be inaccurate")
+				c_vocab = set()
 	else:
-		training_vocab = None
+		w2i = None
+		t2is = None
+		c2i = None
+		c_vocab = None
 				
 	if options.training_data:
 		if not os.path.exists(options.training_data):
@@ -671,15 +678,15 @@ if __name__ == "__main__":
 		
 		# read training data from text file
 		else:
-			if not training_vocab:
-				training_vocab = collections.Counter()
+			if not w2i:
 				w2i = {UNK_TAG: 0} # mapping from word to index
 				t2is = {} # mapping from attribute name to mapping from tag to index
 				c2i = {UNK_CHAR_TAG: 0, PADDING_CHAR: 1} # mapping from character to index, for char-RNN concatenations
+				c_vocab = set()	# set of words as seen in the character-level representation
 			# if we already have loaded the vocabulary, it should include these mappings
 			
 			logging.info("Read training data from {}".format(options.training_data))
-			training_instances = read_file(options.training_data, w2i, t2is, c2i, training_vocab, options.number_index, options.w_token_index, options.c_token_index, options.pos_index, options.morph_index, update_vocab=True)
+			training_instances = read_file(options.training_data, w2i, t2is, c2i, c_vocab, options.number_index, options.w_token_index, options.c_token_index, options.pos_index, options.morph_index, update_vocab=True)
 			
 			# trim training set for size evaluation (sentence based)
 			if len(training_instances) > options.training_sentence_size:
@@ -688,19 +695,19 @@ if __name__ == "__main__":
 				training_instances = training_instances[:options.training_sentence_size]
 
 			# trim training set for size evaluation (token based)
-			training_corpus_size = sum(training_vocab.values())
-			if training_corpus_size > options.training_token_size:
-				logging.info("Reduce training token size to {}".format(options.training_token_size))
-				random.shuffle(training_instances)
-				cumulative_tokens = 0
-				cutoff_index = -1
-				for i,inst in enumerate(training_instances):
-					cumulative_tokens += len(inst.sentence)
-					if cumulative_tokens >= options.token_size:
-						training_instances = training_instances[:i+1]
-						break
+			# training_corpus_size = sum(training_vocab.values())
+			# if training_corpus_size > options.training_token_size:
+				# logging.info("Reduce training token size to {}".format(options.training_token_size))
+				# random.shuffle(training_instances)
+				# cumulative_tokens = 0
+				# cutoff_index = -1
+				# for i,inst in enumerate(training_instances):
+					# cumulative_tokens += len(inst.sentence)
+					# if cumulative_tokens >= options.token_size:
+						# training_instances = training_instances[:i+1]
+						# break
 			
-			logging.info("Training data loaded: {} instances, {} vocabulary items, {} stored vocabulary items, {} characters, {} tag keys".format(len(training_instances), len(training_vocab), len(w2i), len(c2i), len(t2is)))		
+			logging.info("Training data loaded: {} instances, {} word-embedding vocabulary items, {} character-embedding vocabulary items, {} characters, {} tag keys".format(len(training_instances), len(w2i), len(c_vocab), len(c2i), len(t2is)))		
 			
 		if options.training_data_save:
 			logging.info("Save training data to {}".format(options.training_data_save))
@@ -709,7 +716,7 @@ if __name__ == "__main__":
 			
 		if options.vocab_save:
 			logging.info("Save vocabulary to {}".format(options.vocab_save))
-			vocab = {"training_vocab": training_vocab, "w2i": w2i, "t2is": t2is, "c2i": c2i}
+			vocab = {"c_vocab": c_vocab, "w2i": w2i, "t2is": t2is, "c2i": c2i}
 			with open(options.vocab_save, "wb") as outfile:
 				pickle.dump(vocab, outfile)
 	
@@ -718,7 +725,7 @@ if __name__ == "__main__":
 			logging.error("Dev data does not exist at specified location: {}".format(options.dev_data))
 			sys.exit(1)
 		
-		if not training_vocab:
+		if not w2i:
 			if options.word_embedding_dim > 0 or options.word_pretrained_embeddings:
 				logging.error("Cannot use pickled training data without corresponding vocabulary file (--vocab not set)")
 				sys.exit(1)
@@ -730,8 +737,7 @@ if __name__ == "__main__":
 			dev_instances = pickle.load(open(options.dev_data, "rb"))
 		else:
 			logging.info("Read dev data from {}".format(options.dev_data))
-			dev_vocab = collections.Counter()
-			dev_instances = read_file(options.dev_data, w2i, t2is, c2i, dev_vocab, options.number_index, options.w_token_index, options.c_token_index, options.pos_index, options.morph_index, update_vocab=False)
+			dev_instances = read_file(options.dev_data, w2i, t2is, c2i, c_vocab, options.number_index, options.w_token_index, options.c_token_index, options.pos_index, options.morph_index, update_vocab=False)
 		
 		logging.info("Dev data loaded: {} instances".format(len(dev_instances)))
 		
@@ -749,7 +755,7 @@ if __name__ == "__main__":
 		dev_instances = None
 		logging.info("No development data given (--dev-data not set)")
 	
-	if training_vocab:
+	if w2i:
 		# Inverse vocabulary mapping
 		i2w = { i: w for w, i in w2i.items() }
 		i2ts = { att: {i: t for t, i in t2i.items()} for att, t2i in t2is.items() }
@@ -883,7 +889,7 @@ if __name__ == "__main__":
 					devout_filename = None
 				
 				logging.info("Evaluate dev data")
-				dev_loss = evaluate(model, dev_instances, devout_filename, t2is, i2ts, i2w, i2c, training_vocab, options.no_eval_feats, options.add_probs)
+				dev_loss = evaluate(model, dev_instances, devout_filename, t2is, i2ts, i2w, i2c, c_vocab, options.no_eval_feats, options.add_probs)
 				logging.info("Dev Loss: {}".format(dev_loss))
 				
 				# remove output of previous epoch if (a) there is output and we're not in the first epoch, and (b1) we don't want to save anything, or (b2) it is not the second epoch and it is not one of the epochs we want to save
@@ -931,7 +937,7 @@ if __name__ == "__main__":
 			logging.error("Test data does not exist at specified location: {}".format(options.test_data))
 			sys.exit(1)
 		
-		if not training_vocab:
+		if not w2i:
 			logging.error("Cannot use pickled dev data without corresponding vocabulary file (--vocab not set)")
 			sys.exit(1)
 			
@@ -940,8 +946,7 @@ if __name__ == "__main__":
 			test_instances = pickle.load(open(options.test_data, "rb"))
 		else:
 			logging.info("Read test data from {}".format(options.test_data))
-			test_vocab = collections.Counter()
-			test_instances = read_file(options.test_data, w2i, t2is, c2i, test_vocab, options.number_index, options.w_token_index, options.c_token_index, options.pos_index, options.morph_index, update_vocab=False)
+			test_instances = read_file(options.test_data, w2i, t2is, c2i, c_vocab, options.number_index, options.w_token_index, options.c_token_index, options.pos_index, options.morph_index, update_vocab=False)
 		
 		logging.info("Test data loaded: {} instances".format(len(test_instances)))
 			
@@ -956,7 +961,7 @@ if __name__ == "__main__":
 		
 		if model:
 			logging.info("Evaluate test data")
-			evaluate(model, test_instances, options.test_data_out, t2is, i2ts, i2w, i2c, training_vocab, options.no_eval_feats, options.add_probs)
+			evaluate(model, test_instances, options.test_data_out, t2is, i2ts, i2w, i2c, c_vocab, options.no_eval_feats, options.add_probs)
 	
 	else:
 		logging.info("No test data provided")
