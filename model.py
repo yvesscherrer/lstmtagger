@@ -21,25 +21,28 @@ POS_KEY = "POS"
 
 
 def read_pretrained_embeddings(filename, w2i):
-	word_to_embed = {}
+	embeddings = None
+	updates = 0
 	with open(filename, "r", encoding="utf-8") as f:
 		for line in f:
 			split = line.split()
 			if len(split) > 2:
 				word = split[0]
-				vec = split[1:]
-				word_to_embed[word] = vec
-	embedding_dim = len(word_to_embed[list(word_to_embed.keys())[0]])
-	out = np.random.uniform(-0.8, 0.8, (len(w2i), embedding_dim))
-	for word, embed in word_to_embed.items():
-		embed_arr = np.array(embed)
-		if np.linalg.norm(embed_arr) < 15.0 and word in w2i:
-			# Theres a reason for this if condition.  Some tokens in ptb
-			# cause numerical problems because they are long strings of the same punctuation, e.g
-			# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! which end up having huge norms, since Morfessor will
-			# segment it as a ton of ! and then the sum of these morpheme vectors is huge.
-			out[w2i[word]] = np.array(embed)
-	return out
+				try:
+					vec = np.array(split[1:], dtype="float")
+					if embeddings is None:	# create embeddings vector after seeing the first example, determining the nb of dimensions
+						embedding_dim = len(vec)
+						embeddings = np.random.uniform(-0.8, 0.8, (len(w2i), embedding_dim))
+					if word in w2i and np.linalg.norm(vec) < 15.0:
+						# There's a reason for this if condition.  Some tokens in ptb cause numerical problems because they 
+						# are long strings of the same punctuation, e.g !!!!!!!!!!!!!!!!!!!!!!! which end up having huge norms,
+						# since Morfessor will segment it as a ton of ! and then the sum of these morpheme vectors is huge.
+						embeddings[w2i[word]] = vec
+						updates += 1
+				except ValueError:
+					logging.info("Skip embedding starting with '{}'".format(" ".join(split[:4])))
+	logging.info("{} out of {} vocabulary items associated with pretrained embeddings".format(updates, len(w2i)))
+	return embeddings
 
 
 def split_tagstring(s, uni_key=False, has_pos=False):
@@ -332,6 +335,10 @@ class LSTMTagger:
 			s += "- Word embeddings: {} word types, {} embedding dimensions".format(word_set_size, word_embedding_dim)
 			if word_pretrained_embeddings is not None:
 				s += ", pretrained"
+			if self.word_update_emb:
+				s += ", update enabled"
+			else:
+				s += ", update disabled"
 			s += "\n"
 		else:
 			s += "- No word embeddings\n"
@@ -470,9 +477,10 @@ def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab
 		
 		for i, (w_word, c_word) in enumerate(itertools.zip_longest(instance.w_sentence, instance.c_sentence)):
 			is_oov = True
+
 			if w_word and w_word in i2w and i2w[w_word] != UNK_TAG:
 				w_word_str = i2w[w_word]
-				is_oov = i2w[w_word] not in training_vocab
+				is_oov = w_word_str not in training_vocab
 			else:
 				w_word_str = UNK_TAG
 			
@@ -482,7 +490,7 @@ def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, training_vocab
 				is_oov = c_word_str not in training_vocab
 			else:
 				c_word_str = UNK_TAG
-			
+
 			gold_tags = map_tags(i2ts, {x: instance.tags[x][i] for x in instance.tags})
 			pred_tags_probs = map_tags(i2ts, {x: predicted_tags[x][i] for x in predicted_tags}, has_prob=True)
 			pred_tags = {x: pred_tags_probs[x][0] for x in pred_tags_probs}
@@ -627,10 +635,7 @@ if __name__ == "__main__":
 	if options.w_token_index < 0 and options.word_embedding_dim > 0:
 		logging.info("Setting word_embedding_dim from {} to -1 because w_token_index is set to {}".format(options.word_embedding_dim, options.w_token_index))
 		options.word_embedding_dim = -1
-	# if options.word_embedding_dim > 0 and options.word_pretrained_embeddings is None and not options.word_update_emb:
-		# logging.info("Setting word_update_emb to True because word_embedding_dim is set to {} and word_pretrained_embeddings is not given".format(options.word_embedding_dim))
-		# options.word_update_emb = True
-	options.no_eval_feats = options.no_eval_feats.strip().split(",")
+	options.no_eval_feats = [x for x in options.no_eval_feats.strip().split(",") if x != ""]
 	if options.no_eval_feats != []:
 		logging.info("Disregard the following features in evaluation: {}".format(",".join(options.no_eval_feats)))
 	
