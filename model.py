@@ -720,21 +720,21 @@ if __name__ == "__main__":
 			logging.info("Save training data to {}".format(options.training_data_save))
 			with open(options.training_data_save, "wb") as outfile:
 				pickle.dump(training_instances, outfile)
-			
-		if options.vocab_save:
-			logging.info("Save vocabulary to {}".format(options.vocab_save))
-			vocab = {"c_vocab": c_vocab, "w2i": w2i, "t2is": t2is, "c2i": c2i}
-			with open(options.vocab_save, "wb") as outfile:
-				pickle.dump(vocab, outfile)
 	
 	# need to be loaded before dev data
 	if options.word_pretrained_embeddings:
 		if not w2i:
 			w2i = {UNK_TAG: 0}
-		logging.info("Using pretrained embeddings from file {}".format(options.word_pretrained_embeddings))
+		logging.info("Read pretrained embeddings from {}".format(options.word_pretrained_embeddings))
 		word_embeddings = read_pretrained_embeddings(options.word_pretrained_embeddings, w2i, update_vocab=True)
 	else:
 		word_embeddings = None
+	
+	if options.vocab_save:
+		logging.info("Save vocabulary to {}".format(options.vocab_save))
+		vocab = {"c_vocab": c_vocab, "w2i": w2i, "t2is": t2is, "c2i": c2i}
+		with open(options.vocab_save, "wb") as outfile:
+			pickle.dump(vocab, outfile)
 	
 	if options.dev_data:
 		if not os.path.exists(options.dev_data):

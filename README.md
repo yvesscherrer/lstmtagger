@@ -78,7 +78,6 @@ python3 model.py \
 ## Options for easily reducing the size of the training data
 
 `--training-sentence-size`	Instance count of training set (default: unlimited)  
-`--training-token-size`	Token count of training set (default: unlimited)  
 `--debug`	Debug mode (reduces number of training and testing examples)  
 
 ## Model settings
