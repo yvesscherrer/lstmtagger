@@ -306,12 +306,12 @@ class LSTMTagger:
 			self.mlp_out_bias[att] = self.model.add_parameters(set_size)
 		
 		if save_settings_to_file:
+			# pretrained embeddings are already stored in params, no need to store them here as well
 			setting_dict = {
 				"char_num_layers": char_num_layers,
 				"char_set_size": char_set_size,
 				"char_embedding_dim": char_embedding_dim,
 				"char_hidden_dim": char_hidden_dim,
-				"word_pretrained_embeddings": word_pretrained_embeddings,
 				"word_set_size": word_set_size,
 				"word_embedding_dim": word_embedding_dim,
 				"word_update_emb": word_update_emb,
@@ -790,11 +790,15 @@ if __name__ == "__main__":
 			logging.error("Model parameter file does not exist at specified location: {}".format(options.params))
 			sys.exit(1)
 		settings = pickle.load(open(options.settings, "rb"))
+		if "word_pretrained_embeddings" in settings:
+			word_embeddings = settings["word_pretrained_embeddings"]
+		else:
+			word_embeddings = None
 		model = LSTMTagger(char_num_layers = settings["char_num_layers"],
 			char_set_size = settings["char_set_size"],
 			char_embedding_dim = settings["char_embedding_dim"],
 			char_hidden_dim = settings["char_hidden_dim"],
-			word_pretrained_embeddings = settings["word_pretrained_embeddings"],
+			word_pretrained_embeddings = word_embeddings,
 			word_set_size = settings["word_set_size"],
 			word_embedding_dim = settings["word_embedding_dim"],
 			word_update_emb = settings["word_update_emb"],
