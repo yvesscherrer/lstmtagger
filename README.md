@@ -54,6 +54,8 @@ An updated model (based on `torot-201870919` and `proiel-treebank-20180408`) is 
 
 https://helsinkifi-my.sharepoint.com/:f:/g/personal/yvessche_ad_helsinki_fi/Ej2SKwJiQXVKkXS7IJ2o8YcBlPkrQSH-YYBubHrLh2rx5w?e=EPXnHv
 
+The `orig_punct` models differ from the `orig` models with regards to punctuation handling. In `orig`, all punctuation signs are absent, whereas in `orig_punct` they are treated as distinct tokens. The paper only describes the `orig` models.
+
 These models can be loaded to tag new files as follows:
 
 ```
