@@ -44,6 +44,29 @@ python3 model.py \
     --test-data-out testout.txt
 ```
 
+# Pretrained models
+
+The models used in our paper *New developments in tagging pre-modern orthodox Slavic texts* (Y. Scherrer, S. Mocken & A. Rabus, Scripta & e-Scripta 18, 2018) are available for download here:
+
+https://helsinkifi-my.sharepoint.com/:f:/g/personal/yvessche_ad_helsinki_fi/El5gN_-pQTZNrrjPaXDq82YBA3ZsWVPawD7vEH3r44wW8g?e=VFfHxh
+
+An updated model (based on `torot-201870919` and `proiel-treebank-20180408`) is available here:
+
+https://helsinkifi-my.sharepoint.com/:f:/g/personal/yvessche_ad_helsinki_fi/Ej2SKwJiQXVKkXS7IJ2o8YcBlPkrQSH-YYBubHrLh2rx5w?e=EPXnHv
+
+These models can be loaded to tag new files as follows:
+
+```
+python3 model.py \
+    --log-dir /path/to/logdirectory \
+    --vocab /path/to/orig_punct.ud.torot_proiel.clstm/vocab.pkl \
+    --settings /path/to/orig_punct.ud.torot_proiel.clstm/settings.pkl \
+    --params /path/to/orig_punct.ud.torot_proiel.clstm/params*.bin \
+    --test-data orig_punct.ud.test1.text \
+    --test-data-out orig_punct.ud.test1.tagged
+```
+
+
 # Complete list of arguments
 
 ## Loading and saving data
