@@ -50,9 +50,10 @@ The models used in our paper *New developments in tagging pre-modern orthodox Sl
 
 https://helsinkifi-my.sharepoint.com/:f:/g/personal/yvessche_ad_helsinki_fi/El5gN_-pQTZNrrjPaXDq82YBA3ZsWVPawD7vEH3r44wW8g?e=VFfHxh
 
-An updated model (based on `torot-201870919` and `proiel-treebank-20180408`) is available here:
+Updated models (based on `torot-201870919` and `proiel-treebank-20180408`) are available for two formats of morphological descriptions:
 
-https://helsinkifi-my.sharepoint.com/:f:/g/personal/yvessche_ad_helsinki_fi/Ej2SKwJiQXVKkXS7IJ2o8YcBlPkrQSH-YYBubHrLh2rx5w?e=EPXnHv
+* UD format: https://helsinkifi-my.sharepoint.com/:f:/g/personal/yvessche_ad_helsinki_fi/Ej2SKwJiQXVKkXS7IJ2o8YcBlPkrQSH-YYBubHrLh2rx5w?e=EPXnHv
+* Original MTE-like format: https://helsinkifi-my.sharepoint.com/:f:/g/personal/yvessche_ad_helsinki_fi/EmlegdHrFctOvwSb7hi3cV8B8zdRyEJ6uHCE6tZlR-EJmQ?e=eJykw6 (In order to obtain the original tag format, the conversion script `convertOutput.py` needs to be applied to the output of the tagger.)
 
 The `orig_punct` models differ from the `orig` models with regards to punctuation handling. In `orig`, all punctuation signs are absent, whereas in `orig_punct` they are treated as distinct tokens. The paper only describes the `orig` models.
 
