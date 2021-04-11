@@ -5,7 +5,7 @@ Requires Python 3 with DyNet >= 2.0. Tested on CPU only.
 # Installation
 
 ```
-pip3 install numpy dynet progressbar
+pip3 install numpy dynet tqdm
 git clone https://github.com/yvesscherrer/lstmtagger.git
 ```
 
@@ -43,6 +43,10 @@ python3 model.py \
     --test-data uk_iu-ud-test.conllu \
     --test-data-out testout.txt
 ```
+
+# Usage with notebook (Jupyter notebook, Google Colab)
+
+The file `notebook.py` shows how the tagger can be called from within a notebook.
 
 # Pretrained models
 

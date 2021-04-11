@@ -1,11 +1,12 @@
 '''
 Main application script for training a tagger for parts-of-speech and morphosyntactic tags. Run with --help for command line arguments.
 '''
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, namedtuple
 from evaluate_morphotags import Evaluator
+from tqdm import tqdm
 
 import os, sys, argparse, csv, datetime, collections, itertools
-import random, pickle, progressbar, logging
+import random, pickle, logging
 import dynet as dy
 import numpy as np
 
@@ -375,19 +376,11 @@ class LSTMTagger:
 			embeddings = [self.word_rep(None, c) for c in c_sentence]
 		lstm_out = self.tag_bi_lstm.transduce(embeddings)
 
-		H = {}
-		Hb = {}
-		O = {}
-		Ob = {}
 		scores = {}
 		for att in self.attributes:
-			H[att] = dy.parameter(self.lstm_to_tags_params[att])
-			Hb[att] = dy.parameter(self.lstm_to_tags_bias[att])
-			O[att] = dy.parameter(self.mlp_out[att])
-			Ob[att] = dy.parameter(self.mlp_out_bias[att])
 			scores[att] = []
 			for rep in lstm_out:
-				score_t = O[att] * dy.tanh(H[att] * rep + Hb[att]) + Ob[att]
+				score_t = self.mlp_out[att] * dy.tanh(self.lstm_to_tags_params[att] * rep + self.lstm_to_tags_bias[att]) + self.mlp_out_bias[att]
 				scores[att].append(score_t)
 		return scores
 
@@ -456,7 +449,6 @@ def get_att_prop(instances):
 
 
 def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, c_vocab, no_eval_feats=[], add_probs=False):
-	bar = progressbar.ProgressBar()
 	model.disable_dropout()
 	loss = 0.0
 	eval = Evaluator(m='att')
@@ -468,7 +460,7 @@ def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, c_vocab, no_ev
 	else:
 		writer = None
 	
-	for instance in bar(instances):
+	for instance in tqdm(instances):
 		# Instance(w_sentence, c_sentence, tags, length)
 		if instance.length == 0:
 			continue
@@ -556,64 +548,7 @@ def evaluate(model, instances, outfilename, t2is, i2ts, i2w, i2c, c_vocab, no_ev
 	return loss
 
 
-if __name__ == "__main__":
-
-	# ===-----------------------------------------------------------------------===
-	# Argument parsing
-	# ===-----------------------------------------------------------------------===
-	parser = argparse.ArgumentParser()
-	# input and output files
-	parser.add_argument("--training-data", dest="training_data", help="File in which the training data is stored (either as CoNLLU text file or as saved pickle)")
-	parser.add_argument("--training-data-save", dest="training_data_save", default=None, help="Pickle file in which the training data should be stored for future runs (if parameter is omitted, the training data is not saved as pickle)")
-	parser.add_argument("--dev-data", dest="dev_data", help="File in which the dev data is stored (either as CoNLLU text file or as saved pickle)")
-	parser.add_argument("--dev-data-save", dest="dev_data_save", default=None, help="Pickle file in which the dev data should be stored for future runs (if parameter is omitted, the dev data is not saved as pickle)")
-	parser.add_argument("--dev-data-out", dest="dev_data_out", default=None, help="Text files in which to save the annotated dev files (epoch count is added in front of file extension)")
-	parser.add_argument("--test-data", dest="test_data", help="File in which the test data is stored (either as CoNLLU text file or as saved pickle)")
-	parser.add_argument("--test-data-save", dest="test_data_save", default=None, help="Pickle file in which the test data should be stored for future runs (if parameter is omitted, the test data is not saved as pickle)")
-	parser.add_argument("--test-data-out", dest="test_data_out", default="testout.txt", help="Text file in which to save the output of the model")
-	parser.add_argument("--vocab", dest="vocab", default=None, help="Pickle file from which an existing vocabulary is loaded")
-	parser.add_argument("--vocab-save", dest="vocab_save", default=None, help="Pickle file in which the vocabulary is saved")
-	parser.add_argument("--settings", dest="settings", default=None, help="Pickle file in which the model architecture is defined (if omitted, default settings are used)")
-	parser.add_argument("--settings-save", dest="settings_save", default=None, help="Pickle file to which the model architecture is saved")
-	parser.add_argument("--params", dest="params", default=None, help="Binary file (.bin) from which the model weights are loaded")
-	parser.add_argument("--params-save", dest="params_save", default=None, help="Binary files (.bin) in which the model weights are saved (epoch count is added in front of file extension)")
-	parser.add_argument("--keep-every", dest="keep_every", type=int, default=10, help="Keep model files and dev output every n epochs (default: 10, 0 only saves last)")
-	parser.add_argument("--log-dir", dest="log_dir", default="log", help="directory in which the log files are saved")
-	
-	# File format (default options are fine for UD-formatted files)
-	# Call this script several times if not all datasets are formatted in the same way
-	parser.add_argument("--number-index", dest="number_index", type=int, help="Field in which the word numbers are stored (default: 0)", default=0)
-	parser.add_argument("--w-token-index", dest="w_token_index", type=int, help="Field in which the tokens used for the word embeddings are stored (default: 1)", default=1)
-	parser.add_argument("--c-token-index", dest="c_token_index", type=int, help="Field in which the tokens used for the character embeddings are stored (default: 1)", default=1)
-	parser.add_argument("--pos-index", dest="pos_index", type=int, help="Field in which the main POS is stored (default, UD tags: 3) (original non-UD tag: 4)", default=3)
-	parser.add_argument("--morph-index", dest="morph_index", type=int, help="Field in which the morphology tags are stored (default: 5); use negative value if morphosyntactic tags should not be considered", default=5)
-	parser.add_argument("--no-eval-feats", dest="no_eval_feats", type=str, help="(Comma-separated) list of morphological features that should be ignored during evaluation; typically used for additional tasks in multitask settings", default="")
-	parser.add_argument("--add-probs", dest="add_probs", action="store_true", help="Write prediction probabilities to output files")
-	
-	# Options for easily reducing the size of the training data
-	parser.add_argument("--training-sentence-size", default=sys.maxsize, dest="training_sentence_size", type=int, help="Instance count of training set (default: unlimited)")
-	# parser.add_argument("--training-token-size", default=sys.maxsize, dest="training_token_size", type=int, help="Token count of training set (default: unlimited)")
-
-	# Model settings
-	parser.add_argument("--num-epochs", default=40, dest="num_epochs", type=int, help="Number of full passes through training set (default: 40; disable training by setting --num-epochs to negative value)")
-	parser.add_argument("--char-num-layers", default=2, dest="char_num_layers", type=int, help="Number of character LSTM layers (default: 2, use 0 to disable character LSTM)")
-	parser.add_argument("--char-emb-dim", default=128, dest="char_embedding_dim", type=int, help="Size of character embedding layer (default: 128)")
-	parser.add_argument("--char-hidden-dim", default=256, dest="char_hidden_dim", type=int, help="Size of character LSTM hidden layers (default: 256)")
-	parser.add_argument("--word-emb-dim", default=256, dest="word_embedding_dim", type=int, help="Size of word embedding layer (ignored if pre-trained word embeddings are loaded, use 0 to disable word embeddings)")
-	parser.add_argument("--pretrained-embeddings", dest="word_pretrained_embeddings", default=None, help="File from which to read in pretrained embeddings (if not supplied, will be random)")
-	parser.add_argument("--fix-embeddings", dest="fix_embeddings", action="store_true", help="Do not update word embeddings during training (default: off, only makes sense with pretrained embeddings)")
-	parser.add_argument("--tag-num-layers", default=2, dest="tag_num_layers", type=int, help="Number of tagger LSTM layers (default: 2)")
-	parser.add_argument("--tag-hidden-dim", default=256, dest="tag_hidden_dim", type=int, help="Size of tagger LSTM hidden layers (default: 256)")
-	parser.add_argument("--learning-rate", default=0.01, dest="learning_rate", type=float, help="Initial learning rate (default: 0.01)")
-	parser.add_argument("--decay", default=0.1, dest="decay", type=float, help="Learning rate decay (default: 0.1, 0 to turn off)")
-	parser.add_argument("--dropout", default=0.02, dest="dropout", type=float, help="Amount of dropout to apply to LSTM parts of graph (default: 0.02, -1 to turn off)")
-	parser.add_argument("--loss-prop", dest="loss_prop", action="store_true", help="Proportional loss magnitudes")
-	
-	# other
-	parser.add_argument("--dynet-mem", help="Ignore this external argument")
-	parser.add_argument("--debug", dest="debug", action="store_true", help="Debug mode")
-	options = parser.parse_args()
-	
+def main(options):
 	# create log folder if required
 	if not os.path.exists(options.log_dir):
 		os.mkdir(options.log_dir)
@@ -843,7 +778,6 @@ if __name__ == "__main__":
 
 		for epoch in range(1, options.num_epochs + 1):		# epoch counts starts at 1 and includes options.num_epochs
 			logging.info("Starting training epoch {}".format(epoch))
-			bar = progressbar.ProgressBar()
 
 			# set up epoch
 			random.shuffle(training_instances)
@@ -860,7 +794,7 @@ if __name__ == "__main__":
 				train_instances = training_instances
 
 			# main training loop
-			for instance in bar(train_instances):
+			for instance in tqdm(train_instances):
 				if instance.length == 0: continue
 
 				gold_tags = instance.tags
@@ -981,4 +915,65 @@ if __name__ == "__main__":
 		logging.info("No test data provided")
 	
 	logging.info("Finished")
-	
+
+
+# ===-----------------------------------------------------------------------===
+# Argument parsing
+# ===-----------------------------------------------------------------------===
+parser = argparse.ArgumentParser()
+# input and output files
+parser.add_argument("--training-data", dest="training_data", help="File in which the training data is stored (either as CoNLLU text file or as saved pickle)")
+parser.add_argument("--training-data-save", dest="training_data_save", default=None, help="Pickle file in which the training data should be stored for future runs (if parameter is omitted, the training data is not saved as pickle)")
+parser.add_argument("--dev-data", dest="dev_data", help="File in which the dev data is stored (either as CoNLLU text file or as saved pickle)")
+parser.add_argument("--dev-data-save", dest="dev_data_save", default=None, help="Pickle file in which the dev data should be stored for future runs (if parameter is omitted, the dev data is not saved as pickle)")
+parser.add_argument("--dev-data-out", dest="dev_data_out", default=None, help="Text files in which to save the annotated dev files (epoch count is added in front of file extension)")
+parser.add_argument("--test-data", dest="test_data", help="File in which the test data is stored (either as CoNLLU text file or as saved pickle)")
+parser.add_argument("--test-data-save", dest="test_data_save", default=None, help="Pickle file in which the test data should be stored for future runs (if parameter is omitted, the test data is not saved as pickle)")
+parser.add_argument("--test-data-out", dest="test_data_out", default="testout.txt", help="Text file in which to save the output of the model")
+parser.add_argument("--vocab", dest="vocab", default=None, help="Pickle file from which an existing vocabulary is loaded")
+parser.add_argument("--vocab-save", dest="vocab_save", default=None, help="Pickle file in which the vocabulary is saved")
+parser.add_argument("--settings", dest="settings", default=None, help="Pickle file in which the model architecture is defined (if omitted, default settings are used)")
+parser.add_argument("--settings-save", dest="settings_save", default=None, help="Pickle file to which the model architecture is saved")
+parser.add_argument("--params", dest="params", default=None, help="Binary file (.bin) from which the model weights are loaded")
+parser.add_argument("--params-save", dest="params_save", default=None, help="Binary files (.bin) in which the model weights are saved (epoch count is added in front of file extension)")
+parser.add_argument("--keep-every", dest="keep_every", type=int, default=10, help="Keep model files and dev output every n epochs (default: 10, 0 only saves last)")
+parser.add_argument("--log-dir", dest="log_dir", default="log", help="directory in which the log files are saved")
+
+# File format (default options are fine for UD-formatted files)
+# Call this script several times if not all datasets are formatted in the same way
+parser.add_argument("--number-index", dest="number_index", type=int, help="Field in which the word numbers are stored (default: 0)", default=0)
+parser.add_argument("--w-token-index", dest="w_token_index", type=int, help="Field in which the tokens used for the word embeddings are stored (default: 1)", default=1)
+parser.add_argument("--c-token-index", dest="c_token_index", type=int, help="Field in which the tokens used for the character embeddings are stored (default: 1)", default=1)
+parser.add_argument("--pos-index", dest="pos_index", type=int, help="Field in which the main POS is stored (default, UD tags: 3) (original non-UD tag: 4)", default=3)
+parser.add_argument("--morph-index", dest="morph_index", type=int, help="Field in which the morphology tags are stored (default: 5); use negative value if morphosyntactic tags should not be considered", default=5)
+parser.add_argument("--no-eval-feats", dest="no_eval_feats", type=str, help="(Comma-separated) list of morphological features that should be ignored during evaluation; typically used for additional tasks in multitask settings", default="")
+parser.add_argument("--add-probs", dest="add_probs", action="store_true", help="Write prediction probabilities to output files")
+
+# Options for easily reducing the size of the training data
+parser.add_argument("--training-sentence-size", default=sys.maxsize, dest="training_sentence_size", type=int, help="Instance count of training set (default: unlimited)")
+# parser.add_argument("--training-token-size", default=sys.maxsize, dest="training_token_size", type=int, help="Token count of training set (default: unlimited)")
+
+# Model settings
+parser.add_argument("--num-epochs", default=40, dest="num_epochs", type=int, help="Number of full passes through training set (default: 40; disable training by setting --num-epochs to negative value)")
+parser.add_argument("--char-num-layers", default=2, dest="char_num_layers", type=int, help="Number of character LSTM layers (default: 2, use 0 to disable character LSTM)")
+parser.add_argument("--char-emb-dim", default=128, dest="char_embedding_dim", type=int, help="Size of character embedding layer (default: 128)")
+parser.add_argument("--char-hidden-dim", default=256, dest="char_hidden_dim", type=int, help="Size of character LSTM hidden layers (default: 256)")
+parser.add_argument("--word-emb-dim", default=256, dest="word_embedding_dim", type=int, help="Size of word embedding layer (ignored if pre-trained word embeddings are loaded, use 0 to disable word embeddings)")
+parser.add_argument("--pretrained-embeddings", dest="word_pretrained_embeddings", default=None, help="File from which to read in pretrained embeddings (if not supplied, will be random)")
+parser.add_argument("--fix-embeddings", dest="fix_embeddings", action="store_true", help="Do not update word embeddings during training (default: off, only makes sense with pretrained embeddings)")
+parser.add_argument("--tag-num-layers", default=2, dest="tag_num_layers", type=int, help="Number of tagger LSTM layers (default: 2)")
+parser.add_argument("--tag-hidden-dim", default=256, dest="tag_hidden_dim", type=int, help="Size of tagger LSTM hidden layers (default: 256)")
+parser.add_argument("--learning-rate", default=0.01, dest="learning_rate", type=float, help="Initial learning rate (default: 0.01)")
+parser.add_argument("--decay", default=0.1, dest="decay", type=float, help="Learning rate decay (default: 0.1, 0 to turn off)")
+parser.add_argument("--dropout", default=0.02, dest="dropout", type=float, help="Amount of dropout to apply to LSTM parts of graph (default: 0.02, -1 to turn off)")
+parser.add_argument("--loss-prop", dest="loss_prop", action="store_true", help="Proportional loss magnitudes")
+
+# other
+parser.add_argument("--dynet-mem", help="Ignore this external argument")
+parser.add_argument("--debug", dest="debug", action="store_true", help="Debug mode")
+
+
+if __name__ == "__main__":
+	# parse the command line options and call the main program
+	options = parser.parse_args()
+	main(options)
