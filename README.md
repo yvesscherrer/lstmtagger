@@ -27,8 +27,8 @@ python3 model.py \
 This command:
 
 * Creates a directory `exp1` where log files and model files are stored
-* Trains a tagger on the file `pl-ud-train.conllu` (files are assumed to be in CoNLL-U format, as on [Universal Dependencies](https://universaldependencies.org) )
-* Evaluates the model periodically on the file `pl-ud-dev.conllu`
+* Trains a tagger on the file `uk_iu-ud-train.conllu` (files are assumed to be in CoNLL-U format, as on [Universal Dependencies](https://universaldependencies.org) )
+* Evaluates the model periodically on the file `uk_iu-ud-dev.conllu`
 * Stops training after 20 epochs
 * Writes the model parameters to `exp1/vocab.pkl`, `exp1/settings.pkl` and `exp1/params.bin`
 
