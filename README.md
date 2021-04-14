@@ -86,7 +86,7 @@ python3 model.py \
 `--test-data`	File in which the test data is stored (either as CoNLL-U text file or as saved pickle)  
 `--test-data-save`	Pickle file in which the test data should be stored for future runs (if parameter is omitted, the test data is not saved as pickle)  
 `--test-data-out`	Text file in which to save the output of the model  
-`--pretrained-embeddings`	File from which to read in pretrained word embeddings (if not supplied, will be random)
+`--pretrained-embeddings`	File from which to read in pretrained word embeddings (if not supplied, will be random)  
 `--vocab`	Pickle file from which an existing vocabulary is loaded  
 `--vocab-save`	Pickle file in which the vocabulary is saved  
 `--settings`	Pickle file in which the model architecture is defined (if omitted, default settings are used)  
@@ -117,7 +117,7 @@ python3 model.py \
 `--char-emb-dim`	Size of character embedding layer (default: 128)  
 `--char-hidden-dim`	Size of character LSTM hidden layers (default: 256)  
 `--word-emb-dim`	Size of word embedding layer (ignored if pre-trained word embeddings are loaded, use 0 to disable word embeddings)  
-`--fix-embeddings`	Do not update word embeddings during training (default: off, only makes sense with pretrained embeddings)
+`--fix-embeddings`	Do not update word embeddings during training (default: off, only makes sense with pretrained embeddings)  
 `--tag-num-layers`	Number of tagger LSTM layers (default: 2)  
 `--tag-hidden-dim`	Size of tagger LSTM hidden layers (default: 256)  
 `--learning-rate`	Initial learning rate (default: 0.01)  
